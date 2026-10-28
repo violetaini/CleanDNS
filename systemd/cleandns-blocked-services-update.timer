@@ -1,0 +1,11 @@
+[Unit]
+Description=CleanDNS blocked services catalog update check
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=cleandns-blocked-services-update.service
+
+[Install]
+WantedBy=timers.target

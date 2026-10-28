@@ -1,0 +1,33 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  node:
+    name: Node.js regression suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: |
+          for file in *.js cmd/*.mjs scripts/*.mjs; do node --check "$file"; done
+      - name: Check shell entry points
+        run: |
+          for file in build-cleandns-dns apply-doq-port bin/apply-doq-port bin/apply-nginx-doh-path; do bash -n "$file"; done
+      - run: npm test
+  go:
+    name: Native DoQ regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - run: go test -race ./cmd/cleandns-dns
+      - run: go build -trimpath -o bin/cleandns-dns ./cmd/cleandns-dns

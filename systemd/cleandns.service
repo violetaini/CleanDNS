@@ -1,0 +1,19 @@
+[Unit]
+Description=CleanDNS unified DNS core and protocol services
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cleandns
+Environment=CLEANDNS_CONFIG=/opt/cleandns/config.json
+ExecStart=/usr/bin/env node /opt/cleandns/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+LimitNOFILE=65535
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

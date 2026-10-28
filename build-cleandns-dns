@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+out="${1:-./bin/cleandns-dns}"
+mkdir -p "$(dirname "$out")"
+
+go mod download
+CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$out" ./cmd/cleandns-dns
+
+echo "built ${out}"

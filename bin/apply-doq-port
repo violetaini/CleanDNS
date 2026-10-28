@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Compatibility entry point for older deployments. DoQ is owned by
+# cleandns.service; it must never be started as an independent systemd unit.
+port="${1:-}"
+state="${2:-enabled}"
+config_file="${CLEANDNS_CONFIG:-/opt/cleandns/config.json}"
+node_bin="${CLEANDNS_NODE:-node}"
+
+if [[ ! "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+  echo "bad_port" >&2
+  exit 2
+fi
+if [[ "$state" != "enabled" && "$state" != "disabled" ]]; then
+  echo "bad_state" >&2
+  exit 2
+fi
+if [[ ! -f "$config_file" ]]; then
+  echo "missing_config" >&2
+  exit 3
+fi
+
+"$node_bin" - "$config_file" "$port" "$state" <<'NODE'
+const fs = require('node:fs');
+
+const [configPath, portText, state] = process.argv.slice(2);
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+config.service ||= {};
+config.service.doqPort = Number(portText);
+config.service.doqEnabled = state === 'enabled';
+fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+NODE
+
+# Retire a unit left by older installations, if one still exists.
+systemctl disable --now cleandns-doq.service >/dev/null 2>&1 || true
+systemctl daemon-reload
+systemctl restart cleandns.service
+systemctl is-active --quiet cleandns.service
+
+if [[ "$state" == "enabled" ]] && command -v ufw >/dev/null 2>&1; then
+  ufw allow "${port}/udp" comment 'CleanDNS DoQ' >/dev/null || true
+fi
+
+echo "doq=main-service-managed"
+echo "doq_state=${state}"
+echo "doq_port=${port}"

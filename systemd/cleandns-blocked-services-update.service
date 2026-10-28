@@ -1,0 +1,12 @@
+[Unit]
+Description=Update CleanDNS blocked services catalog
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/cleandns
+Environment=CLEANDNS_CONFIG=/opt/cleandns/config.json
+Environment=BLOCKED_SERVICES_AUTOMATIC=1
+ExecStart=/usr/bin/env node /opt/cleandns/cmd/update-blocked-services.mjs
+ExecStartPost=/bin/systemctl kill --kill-who=main --signal=USR1 cleandns.service

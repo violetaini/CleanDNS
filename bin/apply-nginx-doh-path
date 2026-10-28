@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+doh_path="${1:-}"
+proxy_conf="${CLEANDNS_NGINX_CONFIG:-/etc/nginx/conf.d/cleandns.conf}"
+if [[ ! "$doh_path" =~ ^/([A-Za-z0-9._~-]+/)*dns-query$ ]] || [[ "$doh_path" == *".."* ]]; then
+  echo "bad_doh_path" >&2
+  exit 2
+fi
+[[ -f "$proxy_conf" ]] || { echo "missing_proxy_conf" >&2; exit 3; }
+tmp="$(mktemp)"
+bak="${proxy_conf}.bak-doh-sync-$(date +%Y%m%d%H%M%S)"
+trap 'rm -f "$tmp"' EXIT
+cp -a "$proxy_conf" "$bak"
+awk -v p="$doh_path" '
+  BEGIN { done = 0 }
+  /^[[:space:]]*location = .*\/dns-query \{/ && done == 0 {
+    print "    location = " p " {"
+    done = 1
+    next
+  }
+  { print }
+  END { if (done == 0) exit 10 }
+' "$proxy_conf" > "$tmp"
+install -m 0644 "$tmp" "$proxy_conf"
+if ! nginx -t; then
+  cp -a "$bak" "$proxy_conf"
+  echo "nginx_test_failed_rolled_back" >&2
+  exit 4
+fi
+nginx -s reload
+echo "doh_path=${doh_path}"

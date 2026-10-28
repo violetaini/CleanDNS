@@ -1,0 +1,170 @@
+{
+  "domain": "dns.example.com",
+  "http": {
+    "host": "127.0.0.1",
+    "port": 8055
+  },
+  "udp": {
+    "host": "127.0.0.1",
+    "port": 8053
+  },
+  "upstreams": [
+    "223.5.5.5",
+    "119.29.29.29",
+    "8.8.8.8",
+    "1.1.1.1"
+  ],
+  "fallbackUpstreams": [],
+  "bootstrapDns": [],
+  "timeoutMs": 2500,
+  "upstreamMode": "sequential",
+  "dns": {
+    "dnssecEnabled": false,
+    "disableIpv6": false,
+    "refuseAny": true,
+    "resolveClients": false,
+    "privateReverseEnabled": false,
+    "privateReverseUpstreams": []
+  },
+  "cache": {
+    "enabled": true,
+    "maxEntries": 20000,
+    "minTtl": 30,
+    "maxTtl": 600,
+    "staleTtl": 60,
+    "optimistic": false,
+    "optimisticAnswerTtl": 30,
+    "optimisticMaxAge": 43200
+  },
+  "ecs": {
+    "enabled": false,
+    "ipv4Prefix": 24,
+    "ipv6Prefix": 56,
+    "defaultIpv4": ""
+  },
+  "filter": {
+    "enabled": true,
+    "rewritesEnabled": true,
+    "blockMode": "null",
+    "cnameCheck": true,
+    "safeBrowsing": {
+      "enabled": false,
+      "upstream": "https://family.adguard-dns.com/dns-query",
+      "suffix": "sb.dns.adguard.com",
+      "timeoutMs": 3000,
+      "cacheTtlMinutes": 30
+    },
+    "parental": {
+      "enabled": false,
+      "upstream": "https://family.adguard-dns.com/dns-query",
+      "suffix": "pc.dns.adguard.com",
+      "timeoutMs": 3000,
+      "cacheTtlMinutes": 30
+    },
+    "safeSearch": {
+      "enabled": false,
+      "bing": true,
+      "duckduckgo": true,
+      "ecosia": true,
+      "google": true,
+      "pixabay": true,
+      "yandex": true,
+      "youtube": true
+    },
+    "blockedServices": [],
+    "blockedServicesSchedule": {
+      "time_zone": "Local",
+      "sun": {},
+      "mon": {},
+      "tue": {},
+      "wed": {},
+      "thu": {},
+      "fri": {},
+      "sat": {}
+    }
+  },
+  "queryLog": {
+    "enabled": true,
+    "maxEntries": 1000,
+    "retentionHours": 2160,
+    "anonymizeClientIp": true,
+    "ignoredEnabled": false,
+    "ignored": []
+  },
+  "statistics": {
+    "enabled": true,
+    "retentionHours": 24,
+    "ignoredEnabled": false,
+    "ignored": []
+  },
+  "access": {
+    "allowedClients": [],
+    "blockedClients": [],
+    "blockedHosts": []
+  },
+  "dhcp": {
+    "enabled": false,
+    "interfaceName": "",
+    "gateway": "",
+    "subnetMask": "",
+    "rangeStart": "",
+    "rangeEnd": "",
+    "leaseMinutes": 1440,
+    "dnsServers": [],
+    "staticLeases": []
+  },
+  "service": {
+    "dohPath": "/dns-query",
+    "dohEnabled": true,
+    "panelPath": "/admin/",
+    "dohPublicBaseUrl": "",
+    "panelPublicUrl": "",
+    "plainDnsEnabled": false,
+    "plainDnsHost": "0.0.0.0",
+    "plainDnsPort": 53,
+    "doqEnabled": false,
+    "doqEndpoint": "dns.example.com",
+    "doqPort": 8853,
+    "doqTlsCertFile": "/etc/cleandns/tls/fullchain.pem",
+    "doqTlsKeyFile": "/etc/cleandns/tls/privkey.pem",
+    "dohSyncCommand": ""
+  },
+  "rules": {
+    "blockFile": "data/blocklist.txt",
+    "allowFile": "data/allowlist.txt",
+    "rewriteFile": "data/rewrites.txt",
+    "subscriptionFile": "data/subscriptions.txt",
+    "downloadDir": "data/subscriptions.d",
+    "allowSubscriptionFile": "data/allow-subscriptions.txt",
+    "allowDownloadDir": "data/allow-subscriptions.d",
+    "autoUpdateEnabled": true,
+    "autoUpdateIntervalHours": 24,
+    "autoUpdateOnStartup": true,
+    "autoUpdateOnChange": true,
+    "blockedServicesAutoUpdateEnabled": true,
+    "blockedServicesAutoUpdateIntervalHours": 168,
+    "blockedServicesAutoUpdateOnStartup": true
+  },
+  "clients": {
+    "file": "data/clients.json",
+    "runtimeSources": {
+      "whois": true,
+      "arp": true,
+      "rdns": false,
+      "dhcp": true,
+      "hosts": true
+    }
+  },
+  "admin": {
+    "username": "admin",
+    "passwordFile": "data/admin-password",
+    "sessionTtlSeconds": 86400,
+    "trustProxy": false,
+    "profile": {
+      "language": "zh-CN",
+      "theme": "auto"
+    }
+  },
+  "logFile": "data/query.log",
+  "statsFile": "data/stats.json"
+}

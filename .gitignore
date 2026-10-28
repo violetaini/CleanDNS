@@ -1,0 +1,36 @@
+# Local configuration and environment
+config.json
+.env
+.env.*
+!.env.example
+# Runtime state, credentials, databases, logs, and downloaded rules
+data/*
+!data/blocked-services.json
+!data/.gitkeep
+*.log
+*.log.*
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.pem
+*.key
+*.pfx
+*.p12
+# Build output and dependencies
+node_modules/
+bin/cleandns-dns
+bin/cleandns-dns.exe
+bin/dnsproxy
+coverage/
+dist/
+# Workstation and deployment artifacts
+*.bak*
+*.old
+.deploy*/
+.stage*/
+audit-panel/
+audit-output/
+audit-screens-local/
+.DS_Store
+Thumbs.db
