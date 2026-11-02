@@ -11,12 +11,12 @@ import { fileURLToPath } from 'node:url';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempBase = path.resolve(os.tmpdir());
 const root = fs.mkdtempSync(path.join(tempBase, 'cleandns-protocol-access-'));
-let child, upstream, output = '', queries = 0;
+let child, upstream, output = '', queries = 0, dynamicIp = '127.0.0.1';
 const password = 'isolated-protocol-access-test';
 let httpPort, corePort, plainPort, cookie;
 const jsonHeaders = () => ({ cookie, 'content-type': 'application/json' });
 const code = packet => Buffer.from(packet).readUInt16BE(2) & 15;
-const policy = (mode, allowedClients = [], blockedClients = []) => ({ mode, allowedClients, blockedClients });
+const policy = (mode, allowedClients = [], blockedClients = [], allowedDomains = []) => ({ mode, allowedClients, blockedClients, allowedDomains });
 const baseUrl = () => `http://127.0.0.1:${httpPort}`;
 async function getSettings() { return (await fetch(baseUrl() + '/api/settings', { headers: jsonHeaders() })).json(); }
 async function update(body, expected = 200) {
@@ -105,6 +105,28 @@ try {
     const settings = await getSettings();
     assert.equal(settings.plainDnsEnabled, true);
     assert.equal(settings.doqEnabled, false, 'editing an ACL must not enable DoQ');
+    const inherited = Object.fromEntries(['plain','doh','doq'].map(name=>[name,policy('inherit')]));
+    await update({ accessAllowedClients: [], accessBlockedClients: [], accessAllowedDomains: ['HOME.EXAMPLE.TEST.'], accessProtocols: inherited });
+    await waitDynamic('127.0.0.1');
+    assert.deepEqual((await getSettings()).accessAllowedDomains,['home.example.test']);
+    await assertTransport('dynamic global permits ordinary UDP',udp(plainPort),0);
+    await assertTransport('dynamic global permits ordinary TCP',tcp(),0);
+    await assertTransport('dynamic global permits DoH',doh(),0);
+    await assertTransport('dynamic global permits DoQ original peer',doq('127.0.0.1'),0);
+    await assertTransport('dynamic allow list rejects an unrelated peer',doq('192.0.2.1'),5);
+    await update({accessAllowedDomains:[],accessAllowedClients:['192.0.2.1'],accessProtocols:{doh:policy('custom',[],[],['home.example.test'])}});
+    await assertTransport('protocol dynamic allow only affects DoH',doh(),0);
+    await assertTransport('other protocols retain global policy',udp(plainPort),5);
+    await update({accessProtocols:{doh:{blockedClients:['127.0.0.1']}}});
+    await assertTransport('static deny wins over dynamic allow',doh(),5);
+    await update({accessProtocols:{doh:{blockedClients:[]}}});
+    dynamicIp='192.0.2.20';
+    let refresh=await fetch(baseUrl()+'/api/access/dynamic/refresh',{method:'POST',headers:jsonHeaders(),body:'{}'});assert.equal(refresh.status,200);assert.equal((await refresh.json()).started,true);
+    await waitDynamic('192.0.2.20');await assertTransport('new DNS record withdraws previous source even with warm cache',doh(),5);
+    dynamicIp='127.0.0.1';await waitDynamic('127.0.0.1',14000);await assertTransport('TTL timer updates source without saving or restart',doh(),0);
+    const dynamicSaved=(await getSettings()).accessProtocols;
+    for(const patch of [{accessAllowedDomains:['https://bad.example.com']},{accessDynamicRefreshSeconds:1},{accessProtocols:{doq:{allowedDomains:['127.0.0.1']}}}]) {await update(patch,400);assert.deepEqual((await getSettings()).accessProtocols,dynamicSaved);}
+    await stop();await launch();await waitDynamic('127.0.0.1');await assertTransport('dynamic configuration re-resolves after restart',doh(),0);
     console.log('protocol access tests passed: independent transports, IPv4/IPv6 CIDRs, deny priority, cache boundary, invalid/partial settings and persistence');
   }
 } finally {
@@ -116,6 +138,11 @@ try {
 }
 
 async function assertTransport(message, response, expected) { assert.equal(code(await response), expected, message); }
+async function waitDynamic(address,timeout=5000) {
+  const until=Date.now()+timeout;
+  while(Date.now()<until){const r=await fetch(baseUrl()+'/api/access/dynamic',{headers:jsonHeaders()});const status=await r.json();if(status.domains.some(entry=>entry.host==='home.example.test'&&entry.families.some(record=>record.addresses.includes(address))))return;await new Promise(resolve=>setTimeout(resolve,50));}
+  throw new Error('Dynamic DNS fixture did not update');
+}
 function query(name = 'warm-cache.test') {
   const head = Buffer.alloc(12); head.writeUInt16BE(crypto.randomInt(65536)); head.writeUInt16BE(0x100, 2); head.writeUInt16BE(1, 4);
   return Buffer.concat([head, ...name.split('.').map(s => Buffer.concat([Buffer.from([s.length]), Buffer.from(s)])), Buffer.from([0, 0, 1, 0, 1])]);
@@ -157,7 +184,14 @@ async function freePort(udp = false) {
 }
 async function fixture() {
   httpPort = await freePort(); corePort = await freePort(true); plainPort = await freePort();
-  upstream = dgram.createSocket('udp4'); upstream.on('message', (packet, info) => { queries++; const response = Buffer.from(packet); response.writeUInt16BE(0x8180, 2); upstream.send(response, info.port, info.address); });
+  upstream = dgram.createSocket('udp4'); upstream.on('message', (packet, info) => {
+    const dynamic=packet.subarray(12,packet.length-4).equals(query('home.example.test').subarray(12,-4));
+    const answer=dynamic&&packet.readUInt16BE(packet.length-4)===1;
+    if(!dynamic)queries++;
+    let response=Buffer.from(packet);response.writeUInt16BE(0x8180,2);
+    if(answer){response.writeUInt16BE(1,6);const rr=Buffer.from('c00c000100010000000a0004','hex');response=Buffer.concat([response,rr,Buffer.from(dynamicIp.split('.').map(Number))]);}
+    upstream.send(response,info.port,info.address);
+  });
   await new Promise(resolve => upstream.bind(0, '127.0.0.1', resolve));
   const data = path.join(root, 'data'); fs.mkdirSync(data);
   const file = name => path.join(data, name);
@@ -166,7 +200,7 @@ async function fixture() {
   fs.writeFileSync(file('password'), `scrypt$protocol-access$${crypto.scryptSync(password, 'protocol-access', 64).toString('base64url')}\n`);
   const config = {
     domain: 'localhost', http: { host: '127.0.0.1', port: httpPort }, udp: { host: '127.0.0.1', port: corePort },
-    upstreams: [`udp://127.0.0.1:${upstream.address().port}`], fallbackUpstreams: [], bootstrapDns: [], timeoutMs: 500,
+    upstreams: [`udp://127.0.0.1:${upstream.address().port}`], fallbackUpstreams: [], bootstrapDns: [`udp://127.0.0.1:${upstream.address().port}`], timeoutMs: 500,
     dns: { refuseAny: true, privateReverseEnabled: false, resolveClients: false, rateLimit: 0 },
     cache: { enabled: true, maxEntries: 100, minTtl: 1, maxTtl: 60, optimistic: false }, ecs: { enabled: false },
     filter: { enabled: true, blockMode: 'nxdomain', blockedServices: [], safeSearch: { enabled: false } },

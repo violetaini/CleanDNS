@@ -1,7 +1,8 @@
 // Source-IP policy selection. Domain filtering and rate limits remain separate.
+import { normalizeAllowedDomains } from './dynamic-access.js';
 export const ACCESS_PROTOCOLS = Object.freeze(['plain', 'doh', 'doq']);
 const MODES = new Set(['inherit', 'custom', 'unrestricted']);
-const FIELDS = new Set(['mode', 'allowedClients', 'blockedClients']);
+const FIELDS = new Set(['mode', 'allowedClients', 'blockedClients', 'allowedDomains']);
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -42,7 +43,8 @@ export function normalizeProtocolAccess(value = {}, normalizeIdentifier) {
     return [name, {
       mode,
       allowedClients: clientList(policy.allowedClients, normalizeIdentifier),
-      blockedClients: clientList(policy.blockedClients, normalizeIdentifier)
+      blockedClients: clientList(policy.blockedClients, normalizeIdentifier),
+      allowedDomains: normalizeAllowedDomains(policy.allowedDomains)
     }];
   }));
 }

@@ -30,6 +30,7 @@ import {
 } from './upstream-config.js';
 import { parseProxyV2 } from './proxy-protocol.js';
 import { normalizeProtocolAccess, mergeProtocolAccess, selectProtocolAccess } from './protocol-access.js';
+import { DynamicAccess, normalizeAllowedDomains, normalizeDynamicRefresh } from './dynamic-access.js';
 import { dashboardWindowBounds, selectDashboardRows } from './dashboard-window.js';
 import { decodeDnsResponse } from './dns-response.js';
 import { compileDnsRewrites, resolveDnsRewrite } from './dns-rewrite.js';
@@ -249,6 +250,12 @@ const DOQ_RUNTIME_LISTEN = process.env.CLEANDNS_DOQ_RUNTIME_LISTEN || '0.0.0.0';
 
 let config = loadConfig();
 config = normalizeConfig(config);
+const dynamicAccess = new DynamicAccess();
+function configureDynamicAccess() {
+  const servers = config.bootstrapDns.map(parseUpstreamAddress).filter(target => target.protocol === 'udp').map(target => `${net.isIP(target.host) === 6 ? '[' + target.host + ']' : target.host}:${target.port}`);
+  dynamicAccess.configure(config.access, servers);
+}
+configureDynamicAccess();
 ensureDataFiles();
 const queryLogStore = new QueryLogStore(queryLogStoreOptions());
 const runtimeWhoisResolver = new RuntimeWhoisResolver({
@@ -389,6 +396,7 @@ let shuttingDown = false;
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  dynamicAccess.close();
   if (subscriptionAutoUpdateTimer) clearInterval(subscriptionAutoUpdateTimer);
   if (subscriptionAutoUpdateStartupTimer) clearTimeout(subscriptionAutoUpdateStartupTimer);
   if (blockedServicesAutoUpdateTimer) clearInterval(blockedServicesAutoUpdateTimer);
@@ -1008,6 +1016,8 @@ function normalizeAccessConfig(value = {}) {
   access.blockedClients = normalizeAccessClientList(access.blockedClients);
   access.blockedHosts = normalizeDomainList(access.blockedHosts);
   access.protocols = normalizeProtocolAccess(access.protocols, normalizeClientIdentifier);
+  access.allowedDomains = normalizeAllowedDomains(access.allowedDomains);
+  access.dynamicRefreshSeconds = normalizeDynamicRefresh(access.dynamicRefreshSeconds);
   return access;
 }
 
@@ -2072,7 +2082,9 @@ function checkAccess(clientIp, qname, protocol) {
     return { allowed: false, rule: prefix + 'blocked-client' };
   }
   const allowedClients = policy.allowedClients || [];
-  if (allowedClients.length && !allowedClients.some((identifier) => matchesClientIdentifier(identifier, clientIp))) {
+  const allowedDomains = policy.allowedDomains || [];
+  const dynamicAllowed = dynamicAccess.addresses(allowedDomains).some(identifier => matchesClientIdentifier(identifier, clientIp));
+  if ((allowedClients.length || allowedDomains.length) && !dynamicAllowed && !allowedClients.some((identifier) => matchesClientIdentifier(identifier, clientIp))) {
     return { allowed: false, rule: prefix + 'not-allowed-client' };
   }
   const host = normalizeDomain(qname);
@@ -5326,6 +5338,13 @@ async function handleApi(req, res, url) {
       .then(() => json(res, 200, { ok: true, recent: recentQueries, status: getStatus() }))
       .catch((err) => json(res, 500, { error: err.message || 'query_log_clear_failed' }));
   }
+  if (req.method === 'GET' && url.pathname === '/api/access/dynamic') {
+    return json(res, 200, dynamicAccess.snapshot());
+  }
+  if (req.method === 'POST' && url.pathname === '/api/access/dynamic/refresh') {
+    const started = dynamicAccess.requestRefresh();
+    return json(res, 200, { ok: true, started, dynamicAccess: dynamicAccess.snapshot() });
+  }
   if (req.method === 'POST' && url.pathname === '/api/access/client') {
     return readJson(req).then((body) => {
       const client = normalizeClientIdentifier(body.client);
@@ -5630,10 +5649,14 @@ async function handleApi(req, res, url) {
         Object.prototype.hasOwnProperty.call(body, 'accessAllowedClients') ||
         Object.prototype.hasOwnProperty.call(body, 'accessBlockedClients') ||
         Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ||
-        Object.prototype.hasOwnProperty.call(body, 'accessProtocols')
+        Object.prototype.hasOwnProperty.call(body, 'accessProtocols') ||
+        Object.prototype.hasOwnProperty.call(body, 'accessAllowedDomains') ||
+        Object.prototype.hasOwnProperty.call(body, 'accessDynamicRefreshSeconds')
       ) {
         nextConfig.access = normalizeAccessConfig({
           ...config.access,
+          allowedDomains: Object.prototype.hasOwnProperty.call(body, 'accessAllowedDomains') ? body.accessAllowedDomains : config.access.allowedDomains,
+          dynamicRefreshSeconds: Object.prototype.hasOwnProperty.call(body, 'accessDynamicRefreshSeconds') ? body.accessDynamicRefreshSeconds : config.access.dynamicRefreshSeconds,
           allowedClients: Object.prototype.hasOwnProperty.call(body, 'accessAllowedClients') ? body.accessAllowedClients : config.access.allowedClients,
           blockedClients: Object.prototype.hasOwnProperty.call(body, 'accessBlockedClients') ? body.accessBlockedClients : config.access.blockedClients,
           blockedHosts: Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ? body.accessBlockedHosts : config.access.blockedHosts,
@@ -5702,6 +5725,7 @@ async function handleApi(req, res, url) {
       const oldPlainDnsPort = config.service.plainDnsPort;
       const oldDhcpSignature = dhcpConfigSignature(config.dhcp);
       config = normalizeConfig(nextConfig);
+      configureDynamicAccess();
       const dhcpChanged = dhcpConfigSignature(config.dhcp) !== oldDhcpSignature;
       dnsRateLimitBuckets.clear();
       domainProtectionChecker.clear();
@@ -5743,6 +5767,7 @@ async function handleApi(req, res, url) {
       } catch (err) {
         const failedConfig = config;
         config = previousConfig;
+        configureDynamicAccess();
         dnsRateLimitBuckets.clear();
         domainProtectionChecker.clear();
         clearBootstrapLookupCache();
@@ -6083,7 +6108,8 @@ function getStatus(requestedPeriod = null) {
       allowedClients: config.access.allowedClients,
       blockedClients: config.access.blockedClients,
       blockedHosts: config.access.blockedHosts,
-      protocols: config.access.protocols
+      protocols: config.access.protocols,
+      dynamicAccess: dynamicAccess.snapshot()
     },
     blockedServices: getBlockedServices(),
     clients: {
@@ -6494,6 +6520,8 @@ function getSettings() {
     accessBlockedClients: config.access.blockedClients,
     accessBlockedHosts: config.access.blockedHosts,
     accessProtocols: config.access.protocols,
+    accessAllowedDomains: config.access.allowedDomains,
+    accessDynamicRefreshSeconds: config.access.dynamicRefreshSeconds,
     dnsDnssecEnabled: config.dns.dnssecEnabled === true,
     dnsDisableIpv6: config.dns.disableIpv6 === true,
     dnsRefuseAny: config.dns.refuseAny !== false,
