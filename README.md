@@ -4,7 +4,7 @@
 
 # **CleanDNS**
 
-[![Version](https://img.shields.io/badge/Version-0.1.0-f97316?style=for-the-badge)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.2.0-f97316?style=for-the-badge)](VERSION)
 [![Runtime](https://img.shields.io/badge/Runtime-Node.js%2022%2B-22c55e?style=for-the-badge)](package.json)
 [![Native Transport](https://img.shields.io/badge/Native%20Transport-Go%201.26%2B-00add8?style=for-the-badge)](go.mod)
 [![Frontend](https://img.shields.io/badge/Frontend-HTML%20%2B%20JavaScript-42b883?style=for-the-badge)](panel.html)
@@ -29,20 +29,25 @@ CleanDNS is a self-hosted DNS filtering service with a responsive administration
 
 ## Quick Start
 
-Use Node.js 22 or newer. The Node service uses built-in modules and has no external npm runtime dependencies. Go 1.26 or newer is required when building the native DoQ transport.
+### One-command install · Linux x86_64 / arm64
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/violetaini/CleanDNS/main/install.sh | sudo bash
+```
+
+The release includes Node.js 24 and native DoQ; no build tools are needed. Use the first-run browser wizard to select listeners, create an administrator and configure upstream DNS. Setup listens on **127.0.0.1:3000**; the installer prints a token-protected link and an SSH forwarding command for remote servers. Managed upgrades retain configuration and data.
+
+[Installation guide / 安裝指引](docs/first-run.md) · [Releases](https://github.com/violetaini/CleanDNS/releases/latest)
+
+### Run from source
 
 ```bash
 git clone https://github.com/violetaini/CleanDNS.git
 cd CleanDNS
-cp config.example.json config.json
 npm start
 ```
 
-Open **http://127.0.0.1:8055/admin/**. The sample listens on loopback; the internal UDP listener uses port `8053`. Use an SSH tunnel or configure the Nginx example to access a remote installation.
-
-The initial username is `admin`. On its first start, CleanDNS generates a random temporary password, prints it in the server console, and stores its salted hash in `data/admin-password`. Use the password printed by your own instance; there is no shared default password. Change it in the panel after signing in.
-
-The sample keeps public plain DNS, DHCP, and DoQ disabled. Configure certificates and access policy before enabling those listeners. See [deployment](docs/deployment.md) and [configuration](docs/configuration.md).
+Use Node.js 22+. With no config file, the terminal prints a first-run setup link. After setup, open the selected management address (default **http://127.0.0.1:8055/admin/**). Existing config.json files bypass setup. There are no external npm runtime dependencies. Go 1.26+ is needed only to build native DoQ from source.
 
 ## Features
 

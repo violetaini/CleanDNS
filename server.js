@@ -2619,13 +2619,15 @@ function isSessionValid(id) {
   return true;
 }
 
-function sessionCookie(id) {
+function sessionCookie(id, req) {
   const maxAge = Math.floor(adminAuth.sessionTtlMs / 1000);
-  return `cleandns_session=${encodeURIComponent(id)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
+  const secure = req?.socket.encrypted || (config.admin.trustProxy === true && req?.headers['x-forwarded-proto'] === 'https');
+  return `cleandns_session=${encodeURIComponent(id)}; Max-Age=${maxAge}; Path=/; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax`;
 }
 
-function clearSessionCookie() {
-  return 'cleandns_session=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax';
+function clearSessionCookie(req) {
+  const secure = req?.socket.encrypted || (config.admin.trustProxy === true && req?.headers['x-forwarded-proto'] === 'https');
+  return `cleandns_session=; Max-Age=0; Path=/; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax`;
 }
 
 function createDomainMatcher() {
@@ -5251,13 +5253,13 @@ async function handleApi(req, res, url) {
         return json(res, 401, { error: 'invalid_credentials' });
       }
       const sessionId = createSession();
-      json(res, 200, { ok: true, username: adminAuth.username, profile: getAdminProfile() }, { 'set-cookie': sessionCookie(sessionId) });
+      json(res, 200, { ok: true, username: adminAuth.username, profile: getAdminProfile() }, { 'set-cookie': sessionCookie(sessionId, req) });
     }).catch(() => json(res, 400, { error: 'bad_json' }));
   }
   if (req.method === 'POST' && url.pathname === '/api/logout') {
     const id = parseCookies(req).cleandns_session;
     if (id) sessions.delete(id);
-    return json(res, 200, { ok: true }, { 'set-cookie': clearSessionCookie() });
+    return json(res, 200, { ok: true }, { 'set-cookie': clearSessionCookie(req) });
   }
   if (req.method === 'GET' && url.pathname === '/api/session') {
     return json(res, 200, { authenticated: isAuthorized(req), username: adminAuth.username, profile: getAdminProfile() });

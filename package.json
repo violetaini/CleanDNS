@@ -1,10 +1,10 @@
 {
   "name": "cleandns",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js",
+    "start": "node start.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:sso": "node cmd/test-sso-auth.mjs",
     "test:go": "go test ./cmd/cleandns-dns",
@@ -46,7 +46,7 @@
     "update:blocked-services": "node cmd/update-blocked-services.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "description": "Self-hosted DNS filtering with a Node.js policy core, responsive web administration, and a native Go DNS-over-QUIC transport.",
   "repository": {

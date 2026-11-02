@@ -8093,11 +8093,11 @@
     let logDetailOpener = null;
     let logDetailOpenerKey = '';
     const PANEL_ENTRY = '/admin/';
-    const API_ENTRY = '/rpc-7k3n9p2v';
+    const API_ENTRY = '/api';
     const API_BASE = (() => {
       if (document.body.dataset.authApiBase) return document.body.dataset.authApiBase;
       const index = window.location.pathname.indexOf(PANEL_ENTRY);
-      return index >= 0 ? window.location.pathname.slice(0, index) + API_ENTRY : '';
+      return index >= 0 ? window.location.pathname.slice(0, index) + API_ENTRY : API_ENTRY;
     })();
 
     function esc(text) {

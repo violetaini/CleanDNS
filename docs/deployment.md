@@ -2,7 +2,15 @@
 
 ## Local start
 
-Use Node.js 22 or later. OpenSSL is also needed for TLS regression tests. Copy `config.example.json` to `config.json` and run `npm start` from the project directory. The initial administrator password is printed once and its hash is stored in `data/admin-password`.
+Use Node.js 22 or later and run `npm start`. Without a config file, the first-run wizard opens on loopback port 3000; the terminal supplies an installation token. Existing configurations bypass it. OpenSSL is also needed for TLS regression tests. Manually copying `config.example.json` still supports the legacy workflow, which generates a temporary local-admin password if its password file is missing.
+
+## One-command installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/violetaini/CleanDNS/main/install.sh | sudo bash
+```
+
+Prebuilt glibc Linux packages for x86_64/arm64 include Node.js and native DoQ. The installer creates the dedicated service account, retains configuration/data on upgrades and runs the token-protected first-run wizard for new installations. Setup defaults to localhost; use SSH forwarding for a remote server. Full instructions, offline installation and rollback details: [First-run installation](first-run.md).
 
 ## Linux service
 

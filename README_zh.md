@@ -4,7 +4,7 @@
 
 # **CleanDNS**
 
-[![Version](https://img.shields.io/badge/Version-0.1.0-f97316?style=for-the-badge)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.2.0-f97316?style=for-the-badge)](VERSION)
 [![Runtime](https://img.shields.io/badge/Runtime-Node.js%2022%2B-22c55e?style=for-the-badge)](package.json)
 [![Native Transport](https://img.shields.io/badge/Native%20Transport-Go%201.26%2B-00add8?style=for-the-badge)](go.mod)
 [![Frontend](https://img.shields.io/badge/Frontend-HTML%20%2B%20JavaScript-42b883?style=for-the-badge)](panel.html)
@@ -29,20 +29,25 @@ CleanDNS 是一个自部署 DNS 过滤服务，提供响应式网页管理面板
 
 ## 快速开始
 
-推荐使用 Node.js 22 或更新版本。Node 服务只使用内置模块，没有外部 npm 运行时依赖；构建原生 DoQ 需要 Go 1.26 或更新版本。
+### 一键安装 · Linux x86_64 / arm64
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/violetaini/CleanDNS/main/install.sh | sudo bash
+```
+
+安装包自带 Node.js 24 和原生 DoQ，无需在服务器编译。首次安装通过网页向导设置监听地址、管理员账号和上游 DNS，并自动检查端口。向导默认 **127.0.0.1:3000**，安装命令会给出带令牌的链接和远程 SSH 转发方法。升级保留已有配置和数据。
+
+[Installation guide / 安裝指引](docs/first-run.md) · [Releases](https://github.com/violetaini/CleanDNS/releases/latest)
+
+### 从源码启动
 
 ```bash
 git clone https://github.com/violetaini/CleanDNS.git
 cd CleanDNS
-cp config.example.json config.json
 npm start
 ```
 
-打开 **http://127.0.0.1:8055/admin/**。示例只监听本机回环，内部 UDP 端口为 `8053`。远程访问请使用 SSH 隧道或配置 Nginx 反向代理。
-
-初始账号为 `admin`。首次启动会随机生成临时密码并打印到服务器终端，在 `data/admin-password` 保存加盐哈希。请使用你自己实例生成的密码；项目没有通用默认密码，登录后可在面板修改。
-
-示例默认关闭公网普通 DNS、DHCP 和 DoQ。启用前请配置证书与访问策略。详细步骤见[部署说明](docs/deployment.md)和[配置说明](docs/configuration.md)。
+源码运行需要 Node.js 22+。没有配置文件时，终端会给出首次安装链接；向导完成后访问你选择的管理地址，默认为 **http://127.0.0.1:8055/admin/**。已有 config.json 会直接启动服务。Node 核心无外部 npm 运行时依赖，仅自行编译原生 DoQ 时需要 Go 1.26+。
 
 ## 功能
 

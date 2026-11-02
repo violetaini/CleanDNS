@@ -4,7 +4,7 @@
 
 # **CleanDNS**
 
-[![Version](https://img.shields.io/badge/Version-0.1.0-f97316?style=for-the-badge)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.2.0-f97316?style=for-the-badge)](VERSION)
 [![Runtime](https://img.shields.io/badge/Runtime-Node.js%2022%2B-22c55e?style=for-the-badge)](package.json)
 [![Native Transport](https://img.shields.io/badge/Native%20Transport-Go%201.26%2B-00add8?style=for-the-badge)](go.mod)
 [![Frontend](https://img.shields.io/badge/Frontend-HTML%20%2B%20JavaScript-42b883?style=for-the-badge)](panel.html)
@@ -29,20 +29,25 @@ CleanDNS は、レスポンシブな管理画面を備えたセルフホスト�
 
 ## クイックスタート
 
-Node.js 22 以降を推奨します。Node サービスは標準モジュールを使用し、外部 npm ランタイム依存関係はありません。ネイティブ DoQ のビルドには Go 1.26 以降が必要です。
+### ワンコマンドインストール · Linux x86_64 / arm64
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/violetaini/CleanDNS/main/install.sh | sudo bash
+```
+
+Node.js 24 とネイティブ DoQ を同梱しており、サーバー上でのビルドは不要です。初回セットアップ画面でリッスン先、管理者アカウント、上流 DNS を設定し、ポートを確認します。セットアップは **127.0.0.1:3000** で待ち受けます。トークン付きリンクとリモート用 SSH トンネルの手順を表示します。更新時は既存の設定とデータを保持します。
+
+[Installation guide / 安裝指引](docs/first-run.md) · [Releases](https://github.com/violetaini/CleanDNS/releases/latest)
+
+### ソースから起動
 
 ```bash
 git clone https://github.com/violetaini/CleanDNS.git
 cd CleanDNS
-cp config.example.json config.json
 npm start
 ```
 
-**http://127.0.0.1:8055/admin/** を開きます。サンプルはループバックのみをリッスンし、内部 UDP ポートは `8053` です。リモートから利用する場合は SSH トンネルか Nginx を設定してください。
-
-初期ユーザー名は `admin` です。初回起動時にランダムな一時パスワードを生成してコンソールに表示し、ソルト付きハッシュを `data/admin-password` に保存します。共通の初期パスワードはありません。ログイン後に管理画面から変更できます。
-
-公開の通常 DNS、DHCP、DoQ は初期設定で無効です。有効化する前に証明書とアクセス規則を設定してください。[デプロイ手順](docs/deployment.md)と[設定ガイド](docs/configuration.md)を参照してください。
+Node.js 22+ が必要です。設定ファイルがなければ初回設定リンクを表示します。完了後に指定した管理画面（既定 **http://127.0.0.1:8055/admin/**）へアクセスしてください。既存の config.json があれば直接起動します。Node コアに外部 npm ランタイム依存関係はなく、DoQ のソースビルドにのみ Go 1.26+ が必要です。
 
 ## 機能
 
