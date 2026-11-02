@@ -434,13 +434,15 @@
     #ecsConfigModal .modal { width: min(680px, 100%); }
     #ecsConfigModal .settings-form-control input { width: 100%; max-width: 280px; }
     #accessConfigModal .modal { width: min(720px, 100%); }
+    #accessConfigModal, #protocolAccessModal { z-index: 150; }
     #accessConfigModal textarea { width: 100%; min-height: 240px; resize: vertical; }
     #protocolAccessModal .modal { width: min(720px, 100%); }
     #protocolAccessModal textarea { width: 100%; min-height: 125px; resize: vertical; }
     #protocolAccessModal .modal-body { display: grid; gap: 18px; }
     #protocolAccessModal select { width: 100%; }
-    #dynamicAccessModal .modal { width: min(720px, 100%); }
-    #dynamicAccessModal textarea, #protocolAccessDomains { min-height: 110px; }
+    #dynamicAccessControls { margin-top: 16px; }
+    #dynamicAccessControls summary { cursor: pointer; font-weight: 700; }
+    #dynamicAccessControls > div { display: grid; gap: 14px; padding-top: 14px; }
     #dynamicAccessStatus { display: grid; gap: 12px; overflow-wrap: anywhere; }
     .dynamic-domain-status { padding: 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.8; }
     #safeSearchConfigModal .modal { width: min(680px, 100%); }
@@ -6293,7 +6295,6 @@
                   <span class="settings-link-meta"><span class="runtime-detail" id="accessHostsMeta">-</span></span>
                   <span class="settings-link-arrow" aria-hidden="true">&rsaquo;</span>
                 </button>
-                <button class="settings-link-row" id="openDynamicAccess" type="button" aria-haspopup="dialog" aria-controls="dynamicAccessModal"><span><strong>动态域名白名单</strong><span class="settings-link-desc">全局 DDNS 名单、自动检查时间及解析状态。</span></span><span class="settings-link-meta" id="dynamicAccessMeta">自动按 TTL 检查</span><span class="settings-link-arrow" aria-hidden="true">&rsaquo;</span></button>
                 <button class="settings-link-row" id="openProtocolAccessPlain" type="button" aria-haspopup="dialog" aria-controls="protocolAccessModal">
                   <span class="settings-link-main"><strong>普通 DNS · 来源访问控制</strong><span>UDP / TCP 共用本组 IP 白名单和黑名单。</span></span>
                   <span class="settings-link-meta"><span class="runtime-detail" id="protocolAccessPlainMeta">继承全局</span></span><span class="settings-link-arrow" aria-hidden="true">&rsaquo;</span>
@@ -7667,10 +7668,10 @@
           <select id="protocolAccessMode"><option value="inherit">继承全局名单</option><option value="custom">独立设置白名单和黑名单</option><option value="unrestricted">不限制来源 IP</option></select>
           <span id="protocolAccessModeHint"></span>
         </div>
-        <div class="dns-upstream-dialog-field"><label for="protocolAccessAllowed">允许的 IP 或 CIDR</label><span>与动态域名白名单合并；两者均为空时允许未被黑名单拒绝的来源，否则仅允许匹配来源。</span>
-          <textarea id="protocolAccessAllowed" spellcheck="false" placeholder="192.0.2.0/24&#10;2001:db8::/48"></textarea>
+        <div class="dns-upstream-dialog-field"><label for="protocolAccessAllowed">白名单：IP、CIDR 或 DDNS 域名</label><span>每行一条，可以混填。域名自动解析 A / AAAA；非空时仅允许匹配来源，解析失败不会变成开放模式。</span>
+          <textarea id="protocolAccessAllowed" spellcheck="false" placeholder="192.0.2.10&#10;2001:db8::/48&#10;home.example.com"></textarea>
+          <div id="protocolDynamicAccessContainer"></div>
         </div>
-        <div class="dns-upstream-dialog-field"><label for="protocolAccessDomains">动态白名单域名</label><span>每行一个 DDNS 域名，自动解析 A / AAAA。与上方固定 IP 合并；只要任一白名单非空就限制来源，解析失败不会变成开放模式。</span><textarea id="protocolAccessDomains" spellcheck="false" placeholder="home.example.com"></textarea></div>
         <div class="dns-upstream-dialog-field"><label for="protocolAccessBlocked">拒绝的 IP 或 CIDR</label><span>黑名单优先于白名单。每行一条，支持 IPv4、IPv6；以 # 开头的行作为注释。</span>
           <textarea id="protocolAccessBlocked" spellcheck="false" placeholder="192.0.2.10&#10;2001:db8::1"></textarea>
         </div>
@@ -7679,19 +7680,6 @@
     </div>
   </div>
 
-  <div class="modal-backdrop hidden" id="dynamicAccessModal" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dynamicAccessTitle">
-      <div class="modal-head"><div><h2 id="dynamicAccessTitle">动态域名白名单</h2><div class="desc">这里的名单用于继承全局的协议；各协议的独立名单可在对应入口设置。</div></div><button class="secondary btn-icon" id="closeDynamicAccess" type="button" aria-label="关闭"><svg class="btn-svg" aria-hidden="true"><use href="#icon-close"></use></svg></button></div>
-      <div class="modal-body">
-        <div class="dns-upstream-dialog-field"><label for="accessAllowedDomains">全局白名单域名</label><span>每行一个完整域名，不填写 https:// 或路径；与全局固定 IP 白名单合并。黑名单优先。</span><textarea id="accessAllowedDomains" spellcheck="false" placeholder="home.example.com"></textarea></div>
-        <div class="dns-upstream-dialog-field"><label for="accessDynamicRefreshSeconds">检查间隔（秒）</label><input id="accessDynamicRefreshSeconds" type="number" min="0" max="86400" step="1" value="0"><span>0 = 自动按 DNS TTL 检查，范围 10 秒至 1 小时；也可手动填写 10–86400 秒。该间隔应用于所有动态名单。</span></div>
-        <div class="desc">网络失败时每 30 秒重试；旧 IP 在原检查时间后最多保留 5 分钟。明确无记录时立即撤销对应 IPv4 / IPv6。重启后先重新解析。请使用直接指向实际出口 IP 的 DDNS 记录。</div>
-        <div><button id="refreshDynamicAccess" class="secondary" type="button">立即检查已保存域名</button><span class="desc" id="dynamicAccessCheckNotice"></span></div>
-        <div id="dynamicAccessStatus" aria-live="polite">尚未配置动态白名单。</div>
-      </div>
-      <div class="modal-foot"><span class="modal-foot-hint">点击完成暂存，页面保存后生效。</span><span class="button-group modal-foot-actions"><button id="cancelDynamicAccess" class="secondary" type="button">取消</button><button id="applyDynamicAccess" type="button">完成</button></span></div>
-    </div>
-  </div>
   <div class="modal-backdrop hidden" id="accessConfigModal" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="accessConfigTitle">
       <div class="modal-head">
@@ -7704,10 +7692,18 @@
       <div class="modal-body">
         <div class="access-dialog-panel hidden" id="accessAllowedPanel">
           <div class="dns-upstream-dialog-field">
-            <label for="accessAllowedClients">允许的 IP 或 CIDR</label>
-            <span>列表非空时只响应这些客户端，每行一条；以 # 开头的行作为注释。</span>
-            <textarea id="accessAllowedClients" spellcheck="false" placeholder="114.114.114.0/24&#10;2001:db8::/48"></textarea>
+            <label for="accessAllowedClients">白名单：IP、CIDR 或 DDNS 域名</label>
+            <span>每行一条，可以混填；以 # 开头作为注释。域名自动跟随 A / AAAA。非空时仅允许匹配来源，黑名单优先。</span>
+            <textarea id="accessAllowedClients" spellcheck="false" placeholder="114.114.114.0/24&#10;2001:db8::/48&#10;home.example.com"></textarea>
             <div class="access-field-hint" id="accessAllowedHint"></div>
+            <div id="globalDynamicAccessContainer">
+              <details id="dynamicAccessControls"><summary>动态域名：自动更新设置与解析状态</summary><div>
+                <div class="dns-upstream-dialog-field"><label for="accessDynamicRefreshSeconds">检查间隔（秒）</label><input id="accessDynamicRefreshSeconds" type="number" min="0" max="86400" step="1" value="0"><span>0 = 按 TTL 自动检查（10 秒至 1 小时）；手动可填 10–86400 秒。所有动态名单共用此间隔。</span></div>
+                <div class="desc">域名不填写协议、端口或路径。网络失败每 30 秒重试，旧 IP 在原检查时间后最多保留 5 分钟；明确无记录时立即撤销对应地址。重启后重新解析，解析失败不会取消白名单限制。</div>
+                <div><button id="refreshDynamicAccess" class="secondary" type="button">立即检查已保存域名</button><span class="desc" id="dynamicAccessCheckNotice"></span></div>
+                <div id="dynamicAccessStatus" aria-live="polite">尚未配置动态白名单。</div>
+              </div></details>
+            </div>
           </div>
         </div>
         <div class="access-dialog-panel hidden" id="accessBlockedPanel">
@@ -7990,7 +7986,7 @@
     const protocolAccessNames = { plain: '普通 DNS', doh: 'DoH', doq: 'DoQ' };
     let protocolAccessValues = {};
     let protocolAccessEditing = '';
-    let dynamicAccessDraft = null;
+    let protocolRefreshSnapshot = null;
     let accessDialogMode = '';
     let accessDialogSnapshot = null;
     let accessDialogOpener = '';
@@ -8329,7 +8325,6 @@
           ecsConfigModal: cancelEcsConfig,
           accessConfigModal: cancelAccessConfig,
           protocolAccessModal: cancelProtocolAccess,
-          dynamicAccessModal: cancelDynamicAccess,
           dnsCacheConfigModal: cancelDnsCacheConfig,
           clearDnsCacheModal: closeClearDnsCacheModal,
           tlsConfigModal: closeTlsConfigModal,
@@ -13679,9 +13674,9 @@
       Object.keys(protocolAccessNames).forEach(name => {
         const policy = protocolAccessValues[name] || { mode: 'inherit' };
         const custom = policy.mode === 'custom';
-        const allowed = custom ? policy.allowedClients.length : accessInputStats('accessAllowedClients').count;
+        const allowed = custom ? policy.allowedClients.length : splitMixedAllowlist('accessAllowedClients').allowedClients.length;
         const blocked = custom ? policy.blockedClients.length : accessInputStats('accessBlockedClients').count;
-        const domains = custom ? policy.allowedDomains.length : accessRuleValues('accessAllowedDomains').length;
+        const domains = custom ? policy.allowedDomains.length : splitMixedAllowlist('accessAllowedClients').allowedDomains.length;
         const label = policy.mode === 'unrestricted' ? '不限制来源 IP' : (custom ? '独立设置' : '继承全局') + ' · 允许 ' + allowed + ' / 拒绝 ' + blocked + (domains ? ' / 动态域名 ' + domains : '');
         const meta = $(protocolAccessOpener(name).replace('openProtocolAccess', 'protocolAccess') + 'Meta');
         if (meta) meta.textContent = label;
@@ -13689,7 +13684,7 @@
     }
     function updateProtocolAccessMode() {
       const mode = $('protocolAccessMode').value;
-      ['protocolAccessAllowed', 'protocolAccessBlocked', 'protocolAccessDomains'].forEach(id => { $(id).disabled = mode !== 'custom'; $(id).setCustomValidity(''); });
+      ['protocolAccessAllowed', 'protocolAccessBlocked'].forEach(id => { $(id).disabled = mode !== 'custom'; $(id).setCustomValidity(''); });
       $('protocolAccessModeHint').textContent = mode === 'inherit'
         ? '采用全局允许和拒绝客户端名单。原已保存的独立名单会保留。'
         : mode === 'unrestricted' ? '忽略全局来源 IP 名单；域名过滤和限速仍然生效。原已保存的独立名单会保留。'
@@ -13701,15 +13696,19 @@
       const policy = protocolAccessConfig(protocolAccessValues)[name];
       $('protocolAccessTitle').textContent = protocolAccessNames[name] + ' · 来源访问控制';
       $('protocolAccessMode').value = policy.mode;
-      $('protocolAccessAllowed').value = policy.allowedClients.join('\n');
+      $('protocolAccessAllowed').value = [...policy.allowedClients, ...policy.allowedDomains].join('\n');
       $('protocolAccessBlocked').value = policy.blockedClients.join('\n');
-      $('protocolAccessDomains').value = policy.allowedDomains.join('\n');
+      protocolRefreshSnapshot = $('accessDynamicRefreshSeconds').value;
+      mountDynamicAccessControls('protocolDynamicAccessContainer');
       updateProtocolAccessMode();
       showManagedModal('protocolAccessModal', 'protocolAccessMode');
     }
     function cancelProtocolAccess() {
       const opener = protocolAccessOpener(protocolAccessEditing);
+      if (protocolRefreshSnapshot !== null) $('accessDynamicRefreshSeconds').value = protocolRefreshSnapshot;
+      protocolRefreshSnapshot = null;
       protocolAccessEditing = '';
+      handleSettingsChange();
       hideManagedModal('protocolAccessModal', opener);
     }
     function applyProtocolAccess() {
@@ -13720,46 +13719,40 @@
       let next = { ...previous, mode };
       if (mode === 'custom') {
         for (const id of ['protocolAccessAllowed', 'protocolAccessBlocked']) {
-          const field = validateAccessDialogField({ field: id, kind: 'client' });
+          const field = validateAccessDialogField({ field: id, kind: id === 'protocolAccessAllowed' ? 'allow' : 'client' });
           if (!field.checkValidity()) { field.reportValidity(); field.focus(); return; }
         }
-        if (!validateDynamicDomainField('protocolAccessDomains')) return;
-        next = { mode, allowedClients: accessRuleValues('protocolAccessAllowed'), blockedClients: accessRuleValues('protocolAccessBlocked'), allowedDomains: accessRuleValues('protocolAccessDomains') };
+        next = { mode, ...splitMixedAllowlist('protocolAccessAllowed'), blockedClients: accessRuleValues('protocolAccessBlocked') };
       }
+      if (!validateDynamicInterval()) return;
       protocolAccessValues = { ...protocolAccessConfig(protocolAccessValues), [name]: next };
+      protocolRefreshSnapshot = null;
       handleSettingsChange();
       cancelProtocolAccess();
     }
-    function validateDynamicDomainField(id) {
-      const field = $(id); field.setCustomValidity('');
-      const lines = accessRuleValues(id);
-      const invalid = lines.length > 64 || lines.some(host => {
-        try {
-          if (/[\s/:@?#*\\]/.test(host)) return true;
-          const name = new URL('https://' + host).hostname.replace(/\.$/, '');
-          return isIpv4(name) || name.length > 253 || !name.includes('.') || !name.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label));
-        } catch { return true; }
-      });
-      if (invalid) { field.setCustomValidity('请填写有效的完整域名，每行一个，最多 64 个；不含协议、端口或路径。'); field.reportValidity(); field.focus(); return false; }
-      return true;
+    function isValidDynamicDomain(host) {
+      try {
+        if (/[\s/:@?#*\\\[\]]/.test(host)) return false;
+        const name = new URL('https://' + host).hostname.replace(/\.$/, '');
+        return !isIpv4(name) && name.length <= 253 && name.includes('.') && name.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label));
+      } catch { return false; }
     }
-    function openDynamicAccess() {
-      if (!requireLogin()) return;
-      dynamicAccessDraft = { domains: $('accessAllowedDomains').value, interval: $('accessDynamicRefreshSeconds').value };
-      $('accessAllowedDomains').setCustomValidity(''); $('accessDynamicRefreshSeconds').setCustomValidity('');
+    function splitMixedAllowlist(id) {
+      const allowedClients = [], allowedDomains = [];
+      accessRuleValues(id).forEach(value => { (isValidAccessClientIdentifier(value) ? allowedClients : allowedDomains).push(value); });
+      return { allowedClients, allowedDomains };
+    }
+    function mountDynamicAccessControls(container) {
+      $(container).appendChild($('dynamicAccessControls'));
+      $('dynamicAccessControls').open = false;
+      $('accessDynamicRefreshSeconds').setCustomValidity('');
       $('dynamicAccessCheckNotice').textContent = '';
-      showManagedModal('dynamicAccessModal', 'accessAllowedDomains');
       api('/api/access/dynamic').then(renderDynamicAccessStatus).catch(() => { $('dynamicAccessCheckNotice').textContent = '状态读取失败，请重试。'; });
     }
-    function cancelDynamicAccess() {
-      if (dynamicAccessDraft) { $('accessAllowedDomains').value = dynamicAccessDraft.domains; $('accessDynamicRefreshSeconds').value = dynamicAccessDraft.interval; }
-      dynamicAccessDraft = null; handleSettingsChange(); hideManagedModal('dynamicAccessModal', 'openDynamicAccess');
-    }
-    function applyDynamicAccess() {
-      if (!validateDynamicDomainField('accessAllowedDomains')) return;
+    function validateDynamicInterval() {
       const field = $('accessDynamicRefreshSeconds'), number = Number(field.value); field.setCustomValidity('');
-      if (field.value === '' || !Number.isInteger(number) || (number !== 0 && (number < 10 || number > 86400))) { field.setCustomValidity('填写 0 自动检查，或 10–86400 秒。'); field.reportValidity(); return; }
-      dynamicAccessDraft = null; handleSettingsChange(); hideManagedModal('dynamicAccessModal', 'openDynamicAccess');
+      if (field.value === '' || !Number.isInteger(number) || (number !== 0 && (number < 10 || number > 86400))) { $('dynamicAccessControls').open = true; field.setCustomValidity('填写 0 自动检查，或 10–86400 秒。'); field.reportValidity(); field.focus(); return false; }
+      return true;
     }
     function renderDynamicAccessStatus(data) {
       const states = { pending: '等待解析', ok: '正常', stale: '重试中，短期保留旧 IP', expired: '旧 IP 已失效', error: '无可用记录' };
@@ -13780,7 +13773,7 @@
           panel: 'accessAllowedPanel',
           field: 'accessAllowedClients',
           opener: 'openAccessAllowedClients',
-          kind: 'client'
+          kind: 'allow'
         },
         blocked: {
           title: '拒绝客户端',
@@ -13830,13 +13823,14 @@
       const invalidIndex = lines.findIndex(line => {
         const value = line.trim();
         if (!value || value.startsWith('#')) return false;
-        return definition.kind === 'host' ? !isValidAccessHost(value) : !isValidAccessClientIdentifier(value);
+        return definition.kind === 'host' ? !isValidAccessHost(value) : definition.kind === 'allow' ? !(isValidAccessClientIdentifier(value) || isValidDynamicDomain(value)) : !isValidAccessClientIdentifier(value);
       });
       if (invalidIndex >= 0) {
         field.setCustomValidity(definition.kind === 'host'
           ? '第 ' + (invalidIndex + 1) + ' 行不是有效的主机名。'
-          : '第 ' + (invalidIndex + 1) + ' 行不是有效的 IP 或 CIDR。');
+          : '第 ' + (invalidIndex + 1) + (definition.kind === 'allow' ? ' 行不是有效的 IP、CIDR 或完整域名。' : ' 行不是有效的 IP 或 CIDR。'));
       }
+      if (invalidIndex < 0 && definition.kind === 'allow' && splitMixedAllowlist(definition.field).allowedDomains.length > 64) field.setCustomValidity('每组白名单最多填写 64 个动态域名。');
       return field;
     }
     function openAccessConfig(mode) {
@@ -13844,7 +13838,8 @@
       const definition = accessDialogDefinition(mode);
       if (!definition || $(definition.opener)?.disabled) return;
       accessDialogMode = mode;
-      accessDialogSnapshot = { field: definition.field, value: $(definition.field)?.value ?? '' };
+      accessDialogSnapshot = { field: definition.field, value: $(definition.field)?.value ?? '', interval: $('accessDynamicRefreshSeconds').value };
+      if (mode === 'allowed') mountDynamicAccessControls('globalDynamicAccessContainer');
       accessDialogOpener = definition.opener;
       $('accessConfigTitle').textContent = definition.title;
       $('accessConfigDesc').textContent = definition.desc;
@@ -13855,6 +13850,7 @@
     function cancelAccessConfig() {
       if (accessDialogSnapshot && $(accessDialogSnapshot.field)) {
         $(accessDialogSnapshot.field).value = accessDialogSnapshot.value;
+        $('accessDynamicRefreshSeconds').value = accessDialogSnapshot.interval;
         clearAccessDialogValidity();
         handleSettingsChange();
       }
@@ -13873,6 +13869,7 @@
         field.focus();
         return;
       }
+      if (accessDialogMode === 'allowed' && !validateDynamicInterval()) return;
       const fallback = accessDialogOpener;
       accessDialogMode = '';
       accessDialogSnapshot = null;
@@ -14783,9 +14780,10 @@
       const allowed = accessInputStats('accessAllowedClients');
       const blocked = accessInputStats('accessBlockedClients');
       const hosts = accessInputStats('accessBlockedHosts');
-      const domainCount = accessRuleValues('accessAllowedDomains').length;
+      const mixed = splitMixedAllowlist('accessAllowedClients');
+      const domainCount = mixed.allowedDomains.length;
       const mode = allowed.count || domainCount ? '白名单模式' : '开放模式';
-      if ($('accessAllowedMeta')) $('accessAllowedMeta').textContent = allowed.count || domainCount ? allowed.count + ' 条固定规则 / ' + domainCount + ' 个动态域名 · 白名单模式' : '未配置 · 开放模式';
+      if ($('accessAllowedMeta')) $('accessAllowedMeta').textContent = allowed.count ? mixed.allowedClients.length + ' 条固定规则 / ' + domainCount + ' 个动态域名 · 白名单模式' : '未配置 · 开放模式';
       if ($('accessBlockedMeta')) $('accessBlockedMeta').textContent = blocked.count ? blocked.count + ' 条规则 · 拒绝优先' : '未配置';
       if ($('accessHostsMeta')) $('accessHostsMeta').textContent = hosts.count ? hosts.count + ' 条规则' : '未配置';
       if ($('openAccessBlockedClients')) {
@@ -14816,7 +14814,6 @@
         ].map(([k, v]) => '<span>' + esc(k) + '</span><span class="mono">' + esc(v) + '</span>').join('');
       }
       renderProtocolAccessSummary();
-      if ($('dynamicAccessMeta')) $('dynamicAccessMeta').textContent = '全局 ' + accessRuleValues('accessAllowedDomains').length + ' 个域名 · ' + (Number($('accessDynamicRefreshSeconds').value) ? $('accessDynamicRefreshSeconds').value + ' 秒检查' : '自动按 TTL 检查');
     }
     function safeSearchConfigFromControls() {
       const config = { enabled: $('safeSearchEnabled')?.checked === true };
@@ -15473,11 +15470,11 @@
         queryLogAnonymizeClientIp: $('queryLogAnonymizeClientIp').checked,
         queryLogIgnoredEnabled: $('queryLogIgnoredEnabled').checked,
         queryLogIgnoredDomains: splitLines($('queryLogIgnoredDomains').value),
-        accessAllowedClients: accessRuleValues('accessAllowedClients'),
+        accessAllowedClients: splitMixedAllowlist('accessAllowedClients').allowedClients,
         accessBlockedClients: accessRuleValues('accessBlockedClients'),
         accessBlockedHosts: accessRuleValues('accessBlockedHosts'),
         accessProtocols: protocolAccessConfig(protocolAccessValues),
-        accessAllowedDomains: accessRuleValues('accessAllowedDomains'),
+        accessAllowedDomains: splitMixedAllowlist('accessAllowedClients').allowedDomains,
         accessDynamicRefreshSeconds: Number($('accessDynamicRefreshSeconds').value),
         upstreamMode: $('upstreamMode').value,
         fallbackUpstreams: splitLines($('fallbackUpstreams').value),
@@ -15604,11 +15601,10 @@
       $('queryLogAnonymizeClientIp').checked = settings.queryLogAnonymizeClientIp !== false;
       $('queryLogIgnoredEnabled').checked = settings.queryLogIgnoredEnabled === true;
       $('queryLogIgnoredDomains').value = (settings.queryLogIgnoredDomains || []).join('\n');
-      $('accessAllowedClients').value = (settings.accessAllowedClients || []).join('\n');
+      $('accessAllowedClients').value = [...(settings.accessAllowedClients || []), ...(settings.accessAllowedDomains || [])].join('\n');
       $('accessBlockedClients').value = (settings.accessBlockedClients || []).join('\n');
       $('accessBlockedHosts').value = (settings.accessBlockedHosts || []).join('\n');
       protocolAccessValues = protocolAccessConfig(settings.accessProtocols);
-      $('accessAllowedDomains').value = (settings.accessAllowedDomains || []).join('\n');
       $('accessDynamicRefreshSeconds').value = settings.accessDynamicRefreshSeconds || 0;
       $('upstreams').value = (settings.upstreams || []).join('\n');
       $('fallbackUpstreams').value = (settings.fallbackUpstreams || []).join('\n');
@@ -17234,13 +17230,8 @@
     $('openAccessBlockedHosts').onclick = () => openAccessConfig('hosts');
     Object.keys(protocolAccessNames).forEach(name => { $(protocolAccessOpener(name)).onclick = () => openProtocolAccess(name); });
     $('protocolAccessMode').onchange = updateProtocolAccessMode;
-    $('openDynamicAccess').onclick = openDynamicAccess;
-    $('closeDynamicAccess').onclick = cancelDynamicAccess;
-    $('cancelDynamicAccess').onclick = cancelDynamicAccess;
-    $('applyDynamicAccess').onclick = applyDynamicAccess;
     $('refreshDynamicAccess').onclick = refreshDynamicAccess;
-    $('dynamicAccessModal').addEventListener('click', event => { if (event.target === $('dynamicAccessModal')) cancelDynamicAccess(); });
-    ['accessAllowedDomains', 'accessDynamicRefreshSeconds', 'protocolAccessDomains'].forEach(id => $(id).addEventListener('input', () => $(id).setCustomValidity('')));
+    $('accessDynamicRefreshSeconds').addEventListener('input', () => $('accessDynamicRefreshSeconds').setCustomValidity(''));
     $('closeProtocolAccess').onclick = cancelProtocolAccess;
     $('cancelProtocolAccess').onclick = cancelProtocolAccess;
     $('applyProtocolAccess').onclick = applyProtocolAccess;
