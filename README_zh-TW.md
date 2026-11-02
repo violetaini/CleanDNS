@@ -53,7 +53,7 @@ npm start
 - TTL 與樂觀快取、ECS、DNSSEC 請求處理及 IPv6 控制。
 - 查詢記錄、保留期限、IP 匿名化、統計圖表及執行期用戶端探索。
 - 可選 Linux DHCP、網路介面檢查、租約與靜態租約管理。
-- 明暗主題、行動版配置與獨立管理員登入。目前尚未接入 Chitanda SSO。
+- 明暗主題、行動版配置、獨立管理員登入，以及可選的 [Chitanda SSO 管理端登入](docs/sso.md)。DNS 協定入口沿用原有存取規則。
 
 ## 原生 DoQ
 
