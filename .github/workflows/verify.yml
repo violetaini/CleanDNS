@@ -15,10 +15,10 @@ jobs:
           node-version: '22'
       - name: Check JavaScript syntax
         run: |
-          for file in *.js cmd/*.mjs scripts/*.mjs; do node --check "$file"; done
+          for file in *.js *.mjs cmd/*.mjs scripts/*.mjs; do node --check "$file"; done
       - name: Check shell entry points
         run: |
-          for file in build-cleandns-dns apply-doq-port bin/apply-doq-port bin/apply-nginx-doh-path; do bash -n "$file"; done
+          for file in install.sh build-cleandns-dns apply-doq-port bin/apply-doq-port bin/apply-nginx-doh-path; do bash -n "$file"; done
       - run: npm test
   go:
     name: Native DoQ regression tests

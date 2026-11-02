@@ -1,0 +1,87 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: test "${GITHUB_REF_NAME#v}" = "$(cat VERSION)"
+      - run: bash -n install.sh
+      - run: npm test
+      - run: go test -race ./cmd/cleandns-dns
+  package:
+    needs: verify
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Download checksum-verified official Node runtime
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          NODE_ARCH=$ARCH
+          if [ "$ARCH" = amd64 ]; then NODE_ARCH=x64; fi
+          NODE_VERSION=$(node -p process.version)
+          NODE_ARCHIVE="node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
+          curl -fsSLO "https://nodejs.org/dist/${NODE_VERSION}/${NODE_ARCHIVE}"
+          curl -fsSLo node-checksums.txt "https://nodejs.org/dist/${NODE_VERSION}/SHASUMS256.txt"
+          awk -v name="$NODE_ARCHIVE" '$2 == name {print}' node-checksums.txt | sha256sum --check --strict
+          tar -xf "$NODE_ARCHIVE"
+          echo "NODE_BINARY=$PWD/node-${NODE_VERSION}-linux-${NODE_ARCH}/bin/node" >> "$GITHUB_ENV"
+      - name: Build and package
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          go build -trimpath -ldflags="-s -w" -o /tmp/cleandns-dns ./cmd/cleandns-dns
+          node scripts/package-release.mjs "$GOARCH" "$NODE_BINARY" /tmp/cleandns-dns
+      - name: Smoke-test the x86_64 installer
+        if: matrix.arch == 'amd64'
+        run: |
+          (cd dist && sha256sum *.tar.gz > SHASUMS256.txt)
+          bash install.sh --no-service --prefix "$RUNNER_TEMP/cleandns-smoke" --version "$GITHUB_REF_NAME" --archive "$PWD/dist/CleanDNS_${GITHUB_REF_NAME}_linux_amd64.tar.gz"
+          "$RUNNER_TEMP/cleandns-smoke/current/runtime/bin/node" --version
+          "$RUNNER_TEMP/cleandns-smoke/current/bin/cleandns-dns" -h >/dev/null 2>&1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.arch }}
+          path: dist/*.tar.gz
+  publish:
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - name: Publish release and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHASUMS256.txt
+          cp ../install.sh .
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "CleanDNS $GITHUB_REF_NAME" --notes-file ../docs/release-v0.2.0.md *.tar.gz SHASUMS256.txt install.sh

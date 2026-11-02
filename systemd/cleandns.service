@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/cleandns
 Environment=CLEANDNS_CONFIG=/opt/cleandns/config.json
-ExecStart=/usr/bin/env node /opt/cleandns/server.js
+ExecStart=/usr/bin/env node /opt/cleandns/start.mjs
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

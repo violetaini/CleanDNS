@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createSsoAuth } from './sso-auth.js';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
@@ -28,6 +29,8 @@ import {
   upstreamConfigurationTargets
 } from './upstream-config.js';
 import { parseProxyV2 } from './proxy-protocol.js';
+import { normalizeProtocolAccess, mergeProtocolAccess, selectProtocolAccess } from './protocol-access.js';
+import { DynamicAccess, normalizeAllowedDomains, normalizeDynamicRefresh } from './dynamic-access.js';
 import { dashboardWindowBounds, selectDashboardRows } from './dashboard-window.js';
 import { decodeDnsResponse } from './dns-response.js';
 import { compileDnsRewrites, resolveDnsRewrite } from './dns-rewrite.js';
@@ -247,6 +250,12 @@ const DOQ_RUNTIME_LISTEN = process.env.CLEANDNS_DOQ_RUNTIME_LISTEN || '0.0.0.0';
 
 let config = loadConfig();
 config = normalizeConfig(config);
+const dynamicAccess = new DynamicAccess();
+function configureDynamicAccess() {
+  const servers = config.bootstrapDns.map(parseUpstreamAddress).filter(target => target.protocol === 'udp').map(target => `${net.isIP(target.host) === 6 ? '[' + target.host + ']' : target.host}:${target.port}`);
+  dynamicAccess.configure(config.access, servers);
+}
+configureDynamicAccess();
 ensureDataFiles();
 const queryLogStore = new QueryLogStore(queryLogStoreOptions());
 const runtimeWhoisResolver = new RuntimeWhoisResolver({
@@ -284,6 +293,7 @@ const dnsRateLimitBuckets = new Map();
 const domainProtectionChecker = new DomainProtectionChecker({ query: queryDomainProtectionService });
 const recentQueries = [];
 let startedAt = Date.now();
+const ssoAuth = createSsoAuth();
 let adminAuth = ensureAdminAuth();
 const sessions = new Map();
 const subscriptionAutoUpdateState = {
@@ -386,6 +396,7 @@ let shuttingDown = false;
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  dynamicAccess.close();
   if (subscriptionAutoUpdateTimer) clearInterval(subscriptionAutoUpdateTimer);
   if (subscriptionAutoUpdateStartupTimer) clearTimeout(subscriptionAutoUpdateStartupTimer);
   if (blockedServicesAutoUpdateTimer) clearInterval(blockedServicesAutoUpdateTimer);
@@ -1004,6 +1015,9 @@ function normalizeAccessConfig(value = {}) {
   access.allowedClients = normalizeAccessClientList(access.allowedClients);
   access.blockedClients = normalizeAccessClientList(access.blockedClients);
   access.blockedHosts = normalizeDomainList(access.blockedHosts);
+  access.protocols = normalizeProtocolAccess(access.protocols, normalizeClientIdentifier);
+  access.allowedDomains = normalizeAllowedDomains(access.allowedDomains);
+  access.dynamicRefreshSeconds = normalizeDynamicRefresh(access.dynamicRefreshSeconds);
   return access;
 }
 
@@ -2060,14 +2074,18 @@ function isIpInCidr(ip, cidr) {
   return Buffer.compare(maskBytes(ipBytes, prefix), maskBytes(networkBytes, prefix)) === 0;
 }
 
-function checkAccess(clientIp, qname) {
-  const blockedClients = config.access?.blockedClients || [];
+function checkAccess(clientIp, qname, protocol) {
+  const { policy, scope } = selectProtocolAccess(config.access, protocol);
+  const prefix = scope === 'global' ? 'access:' : `access:${scope}:`;
+  const blockedClients = policy.blockedClients || [];
   if (blockedClients.some((identifier) => matchesClientIdentifier(identifier, clientIp))) {
-    return { allowed: false, rule: 'access:blocked-client' };
+    return { allowed: false, rule: prefix + 'blocked-client' };
   }
-  const allowedClients = config.access?.allowedClients || [];
-  if (allowedClients.length && !allowedClients.some((identifier) => matchesClientIdentifier(identifier, clientIp))) {
-    return { allowed: false, rule: 'access:not-allowed-client' };
+  const allowedClients = policy.allowedClients || [];
+  const allowedDomains = policy.allowedDomains || [];
+  const dynamicAllowed = dynamicAccess.addresses(allowedDomains).some(identifier => matchesClientIdentifier(identifier, clientIp));
+  if ((allowedClients.length || allowedDomains.length) && !dynamicAllowed && !allowedClients.some((identifier) => matchesClientIdentifier(identifier, clientIp))) {
+    return { allowed: false, rule: prefix + 'not-allowed-client' };
   }
   const host = normalizeDomain(qname);
   const blockedHost = (config.access?.blockedHosts || []).find((domain) => host === domain || host.endsWith('.' + domain));
@@ -2601,13 +2619,15 @@ function isSessionValid(id) {
   return true;
 }
 
-function sessionCookie(id) {
+function sessionCookie(id, req) {
   const maxAge = Math.floor(adminAuth.sessionTtlMs / 1000);
-  return `cleandns_session=${encodeURIComponent(id)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
+  const secure = req?.socket.encrypted || (config.admin.trustProxy === true && req?.headers['x-forwarded-proto'] === 'https');
+  return `cleandns_session=${encodeURIComponent(id)}; Max-Age=${maxAge}; Path=/; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax`;
 }
 
-function clearSessionCookie() {
-  return 'cleandns_session=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax';
+function clearSessionCookie(req) {
+  const secure = req?.socket.encrypted || (config.admin.trustProxy === true && req?.headers['x-forwarded-proto'] === 'https');
+  return `cleandns_session=; Max-Age=0; Path=/; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax`;
 }
 
 function createDomainMatcher() {
@@ -3560,8 +3580,11 @@ function startHttpServer() {
       if (url.pathname === '/healthz') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - startedAt) / 1000) });
       if (url.pathname === '/favicon.ico') return serveFavicon(res);
       if (url.pathname === config.service.dohPath) return handleDoh(req, res, url);
-      if (url.pathname === '/' || url.pathname === '/clean-dns' || url.pathname === '/admin/') return servePanel(res);
-      if (url.pathname.startsWith('/api/')) return handleApi(req, res, url);
+      if (url.pathname === '/' || url.pathname === '/clean-dns' || url.pathname === '/admin/' || url.pathname === '/clean-dns/') {
+        if (ssoAuth.enabled && !(await ssoAuth.panel(req, res))) return;
+        return servePanel(res);
+      }
+      if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
       notFound(res);
     } catch (err) {
       console.error(err);
@@ -3855,7 +3878,7 @@ async function resolveDns(packet, clientIp, protocol) {
     }, response, originalResponse);
     return response;
   };
-  const access = checkAccess(clientIp, parsed.qname);
+  const access = checkAccess(clientIp, parsed.qname, protocol);
   if (!access.allowed) {
     stat('blocked');
     statMap('byRule', access.rule);
@@ -5220,7 +5243,8 @@ async function updateDhcpStaticLease(body) {
   }
 }
 
-function handleApi(req, res, url) {
+async function handleApi(req, res, url) {
+  if (ssoAuth.enabled && await ssoAuth.handleApi(req, res, url, getAdminProfile)) return;
   if (req.method === 'POST' && url.pathname === '/api/login') {
     return readJson(req).then((body) => {
       const username = String(body.username || '');
@@ -5229,13 +5253,13 @@ function handleApi(req, res, url) {
         return json(res, 401, { error: 'invalid_credentials' });
       }
       const sessionId = createSession();
-      json(res, 200, { ok: true, username: adminAuth.username, profile: getAdminProfile() }, { 'set-cookie': sessionCookie(sessionId) });
+      json(res, 200, { ok: true, username: adminAuth.username, profile: getAdminProfile() }, { 'set-cookie': sessionCookie(sessionId, req) });
     }).catch(() => json(res, 400, { error: 'bad_json' }));
   }
   if (req.method === 'POST' && url.pathname === '/api/logout') {
     const id = parseCookies(req).cleandns_session;
     if (id) sessions.delete(id);
-    return json(res, 200, { ok: true }, { 'set-cookie': clearSessionCookie() });
+    return json(res, 200, { ok: true }, { 'set-cookie': clearSessionCookie(req) });
   }
   if (req.method === 'GET' && url.pathname === '/api/session') {
     return json(res, 200, { authenticated: isAuthorized(req), username: adminAuth.username, profile: getAdminProfile() });
@@ -5315,6 +5339,13 @@ function handleApi(req, res, url) {
     return clearQueryLog()
       .then(() => json(res, 200, { ok: true, recent: recentQueries, status: getStatus() }))
       .catch((err) => json(res, 500, { error: err.message || 'query_log_clear_failed' }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/access/dynamic') {
+    return json(res, 200, dynamicAccess.snapshot());
+  }
+  if (req.method === 'POST' && url.pathname === '/api/access/dynamic/refresh') {
+    const started = dynamicAccess.requestRefresh();
+    return json(res, 200, { ok: true, started, dynamicAccess: dynamicAccess.snapshot() });
   }
   if (req.method === 'POST' && url.pathname === '/api/access/client') {
     return readJson(req).then((body) => {
@@ -5619,13 +5650,21 @@ function handleApi(req, res, url) {
       if (
         Object.prototype.hasOwnProperty.call(body, 'accessAllowedClients') ||
         Object.prototype.hasOwnProperty.call(body, 'accessBlockedClients') ||
-        Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts')
+        Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ||
+        Object.prototype.hasOwnProperty.call(body, 'accessProtocols') ||
+        Object.prototype.hasOwnProperty.call(body, 'accessAllowedDomains') ||
+        Object.prototype.hasOwnProperty.call(body, 'accessDynamicRefreshSeconds')
       ) {
         nextConfig.access = normalizeAccessConfig({
           ...config.access,
+          allowedDomains: Object.prototype.hasOwnProperty.call(body, 'accessAllowedDomains') ? body.accessAllowedDomains : config.access.allowedDomains,
+          dynamicRefreshSeconds: Object.prototype.hasOwnProperty.call(body, 'accessDynamicRefreshSeconds') ? body.accessDynamicRefreshSeconds : config.access.dynamicRefreshSeconds,
           allowedClients: Object.prototype.hasOwnProperty.call(body, 'accessAllowedClients') ? body.accessAllowedClients : config.access.allowedClients,
           blockedClients: Object.prototype.hasOwnProperty.call(body, 'accessBlockedClients') ? body.accessBlockedClients : config.access.blockedClients,
-          blockedHosts: Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ? body.accessBlockedHosts : config.access.blockedHosts
+          blockedHosts: Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ? body.accessBlockedHosts : config.access.blockedHosts,
+          protocols: Object.prototype.hasOwnProperty.call(body, 'accessProtocols')
+            ? mergeProtocolAccess(config.access.protocols, body.accessProtocols, normalizeClientIdentifier)
+            : config.access.protocols
         });
       }
       if (
@@ -5688,6 +5727,7 @@ function handleApi(req, res, url) {
       const oldPlainDnsPort = config.service.plainDnsPort;
       const oldDhcpSignature = dhcpConfigSignature(config.dhcp);
       config = normalizeConfig(nextConfig);
+      configureDynamicAccess();
       const dhcpChanged = dhcpConfigSignature(config.dhcp) !== oldDhcpSignature;
       dnsRateLimitBuckets.clear();
       domainProtectionChecker.clear();
@@ -5729,6 +5769,7 @@ function handleApi(req, res, url) {
       } catch (err) {
         const failedConfig = config;
         config = previousConfig;
+        configureDynamicAccess();
         dnsRateLimitBuckets.clear();
         domainProtectionChecker.clear();
         clearBootstrapLookupCache();
@@ -5916,6 +5957,7 @@ function handleApi(req, res, url) {
 }
 
 function isAuthorized(req) {
+  if (ssoAuth.enabled) return Boolean(req.ssoIdentity);
   return isSessionValid(parseCookies(req).cleandns_session);
 }
 
@@ -6067,7 +6109,9 @@ function getStatus(requestedPeriod = null) {
     access: {
       allowedClients: config.access.allowedClients,
       blockedClients: config.access.blockedClients,
-      blockedHosts: config.access.blockedHosts
+      blockedHosts: config.access.blockedHosts,
+      protocols: config.access.protocols,
+      dynamicAccess: dynamicAccess.snapshot()
     },
     blockedServices: getBlockedServices(),
     clients: {
@@ -6477,6 +6521,9 @@ function getSettings() {
     accessAllowedClients: config.access.allowedClients,
     accessBlockedClients: config.access.blockedClients,
     accessBlockedHosts: config.access.blockedHosts,
+    accessProtocols: config.access.protocols,
+    accessAllowedDomains: config.access.allowedDomains,
+    accessDynamicRefreshSeconds: config.access.dynamicRefreshSeconds,
     dnsDnssecEnabled: config.dns.dnssecEnabled === true,
     dnsDisableIpv6: config.dns.disableIpv6 === true,
     dnsRefuseAny: config.dns.refuseAny !== false,
@@ -7373,7 +7420,8 @@ function servePanel(res) {
   if (!fs.existsSync(panelPath)) {
     return json(res, 500, { error: 'panel_missing' });
   }
-  const html = fs.readFileSync(panelPath, 'utf8');
+  let html = fs.readFileSync(panelPath, 'utf8');
+  if (ssoAuth.enabled) html = html.replace(/<body(?=[\s>])/, '<body data-auth-mode="sso" data-auth-start="' + ssoAuth.loginUrl + '" data-auth-api-base="' + ssoAuth.apiBase + '"');
   res.writeHead(200, {
     'content-type': 'text/html; charset=utf-8',
     'cache-control': 'no-store',
