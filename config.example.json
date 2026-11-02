@@ -100,7 +100,12 @@
   "access": {
     "allowedClients": [],
     "blockedClients": [],
-    "blockedHosts": []
+    "blockedHosts": [],
+    "protocols": {
+      "plain": { "mode": "inherit", "allowedClients": [], "blockedClients": [] },
+      "doh": { "mode": "inherit", "allowedClients": [], "blockedClients": [] },
+      "doq": { "mode": "inherit", "allowedClients": [], "blockedClients": [] }
+    }
   },
   "dhcp": {
     "enabled": false,

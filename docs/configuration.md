@@ -23,3 +23,19 @@ Copy `config.example.json` to the private `config.json`, or set `CLEANDNS_CONFIG
 Upstream examples: `223.5.5.5`, `tcp://1.1.1.1`, `tls://dns.example.com`, `https://dns.example.com/dns-query`, and `quic://dns.example.com:853`. Parser behavior is covered in `upstream.js` and `cmd/test-upstream-transports.mjs`.
 
 Runtime files under `data/` are ignored by Git. The committed blocked-service catalog is public data; your selections, update state, clients, query history, and credentials are separate files.
+
+## Per-protocol source IP access
+
+In **DNS settings → Access control**, ordinary DNS (UDP and TCP together), DoH, and DoQ each have a source-IP policy. The corresponding config keys are `access.protocols.plain`, `.doh`, and `.doq`:
+
+```json
+{"mode":"custom","allowedClients":["192.0.2.0/24","2001:db8::/32"],"blockedClients":["192.0.2.10"]}
+```
+
+- `inherit` (default): use the existing global `access.allowedClients` and `access.blockedClients`.
+- `custom`: use this protocol's lists instead of the global source lists. A nonempty allow list rejects all other sources; an empty allow list permits sources not on the block list.
+- `unrestricted`: skip source-IP lists for this protocol.
+
+Block entries win over matching allow entries. All modes retain global blocked hostnames, domain filtering, and rate limits. IPv4, IPv6, and CIDR networks are supported. These settings do not enable listeners or change their ports. DoQ uses the original peer address forwarded by its managed helper; keep the internal UDP core bound to loopback and inaccessible to untrusted clients. For DoH behind a reverse proxy, trust forwarding headers only when direct access to the backend is restricted to trusted proxies.
+
+The settings API exposes this map as `accessProtocols`. `POST /api/settings` accepts partial protocol/field updates; omitted groups and dormant lists are preserved. Invalid modes or IP entries reject the entire update. Older settings requests that omit `accessProtocols` retain the current policies. In the panel, **Done** stages a policy; the page's **Save** button persists it.

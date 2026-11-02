@@ -29,6 +29,7 @@ import {
   upstreamConfigurationTargets
 } from './upstream-config.js';
 import { parseProxyV2 } from './proxy-protocol.js';
+import { normalizeProtocolAccess, mergeProtocolAccess, selectProtocolAccess } from './protocol-access.js';
 import { dashboardWindowBounds, selectDashboardRows } from './dashboard-window.js';
 import { decodeDnsResponse } from './dns-response.js';
 import { compileDnsRewrites, resolveDnsRewrite } from './dns-rewrite.js';
@@ -1006,6 +1007,7 @@ function normalizeAccessConfig(value = {}) {
   access.allowedClients = normalizeAccessClientList(access.allowedClients);
   access.blockedClients = normalizeAccessClientList(access.blockedClients);
   access.blockedHosts = normalizeDomainList(access.blockedHosts);
+  access.protocols = normalizeProtocolAccess(access.protocols, normalizeClientIdentifier);
   return access;
 }
 
@@ -2062,14 +2064,16 @@ function isIpInCidr(ip, cidr) {
   return Buffer.compare(maskBytes(ipBytes, prefix), maskBytes(networkBytes, prefix)) === 0;
 }
 
-function checkAccess(clientIp, qname) {
-  const blockedClients = config.access?.blockedClients || [];
+function checkAccess(clientIp, qname, protocol) {
+  const { policy, scope } = selectProtocolAccess(config.access, protocol);
+  const prefix = scope === 'global' ? 'access:' : `access:${scope}:`;
+  const blockedClients = policy.blockedClients || [];
   if (blockedClients.some((identifier) => matchesClientIdentifier(identifier, clientIp))) {
-    return { allowed: false, rule: 'access:blocked-client' };
+    return { allowed: false, rule: prefix + 'blocked-client' };
   }
-  const allowedClients = config.access?.allowedClients || [];
+  const allowedClients = policy.allowedClients || [];
   if (allowedClients.length && !allowedClients.some((identifier) => matchesClientIdentifier(identifier, clientIp))) {
-    return { allowed: false, rule: 'access:not-allowed-client' };
+    return { allowed: false, rule: prefix + 'not-allowed-client' };
   }
   const host = normalizeDomain(qname);
   const blockedHost = (config.access?.blockedHosts || []).find((domain) => host === domain || host.endsWith('.' + domain));
@@ -3860,7 +3864,7 @@ async function resolveDns(packet, clientIp, protocol) {
     }, response, originalResponse);
     return response;
   };
-  const access = checkAccess(clientIp, parsed.qname);
+  const access = checkAccess(clientIp, parsed.qname, protocol);
   if (!access.allowed) {
     stat('blocked');
     statMap('byRule', access.rule);
@@ -5625,13 +5629,17 @@ async function handleApi(req, res, url) {
       if (
         Object.prototype.hasOwnProperty.call(body, 'accessAllowedClients') ||
         Object.prototype.hasOwnProperty.call(body, 'accessBlockedClients') ||
-        Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts')
+        Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ||
+        Object.prototype.hasOwnProperty.call(body, 'accessProtocols')
       ) {
         nextConfig.access = normalizeAccessConfig({
           ...config.access,
           allowedClients: Object.prototype.hasOwnProperty.call(body, 'accessAllowedClients') ? body.accessAllowedClients : config.access.allowedClients,
           blockedClients: Object.prototype.hasOwnProperty.call(body, 'accessBlockedClients') ? body.accessBlockedClients : config.access.blockedClients,
-          blockedHosts: Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ? body.accessBlockedHosts : config.access.blockedHosts
+          blockedHosts: Object.prototype.hasOwnProperty.call(body, 'accessBlockedHosts') ? body.accessBlockedHosts : config.access.blockedHosts,
+          protocols: Object.prototype.hasOwnProperty.call(body, 'accessProtocols')
+            ? mergeProtocolAccess(config.access.protocols, body.accessProtocols, normalizeClientIdentifier)
+            : config.access.protocols
         });
       }
       if (
@@ -6074,7 +6082,8 @@ function getStatus(requestedPeriod = null) {
     access: {
       allowedClients: config.access.allowedClients,
       blockedClients: config.access.blockedClients,
-      blockedHosts: config.access.blockedHosts
+      blockedHosts: config.access.blockedHosts,
+      protocols: config.access.protocols
     },
     blockedServices: getBlockedServices(),
     clients: {
@@ -6484,6 +6493,7 @@ function getSettings() {
     accessAllowedClients: config.access.allowedClients,
     accessBlockedClients: config.access.blockedClients,
     accessBlockedHosts: config.access.blockedHosts,
+    accessProtocols: config.access.protocols,
     dnsDnssecEnabled: config.dns.dnssecEnabled === true,
     dnsDisableIpv6: config.dns.disableIpv6 === true,
     dnsRefuseAny: config.dns.refuseAny !== false,
