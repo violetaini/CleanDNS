@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node scripts/run-tests.mjs",
+    "test:sso": "node cmd/test-sso-auth.mjs",
     "test:go": "go test ./cmd/cleandns-dns",
     "build:doq": "go build -trimpath -o bin/cleandns-dns ./cmd/cleandns-dns",
     "smoke:doq-upstream": "node cmd/smoke-doq-upstream.mjs",

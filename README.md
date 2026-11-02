@@ -53,7 +53,7 @@ The sample keeps public plain DNS, DHCP, and DoQ disabled. Configure certificate
 - DNS caching with TTL controls, optimistic responses, ECS, DNSSEC request handling, and IPv6 policies.
 - Query logs, retention, IP anonymization, dashboard charts, and runtime client discovery.
 - Optional Linux DHCP runtime, interface checks, leases, and static leases.
-- Light/dark themes, responsive navigation, and a local administrator login. Chitanda SSO is not included in this source snapshot.
+- Light/dark themes, responsive navigation, local administrator login, and optional [Chitanda SSO](docs/sso.md) for management pages and APIs. DNS protocols retain their own access policies.
 
 ## Architecture
 

@@ -1709,6 +1709,7 @@
     .login-card .desc { margin: 0; max-width: none; color: var(--muted); line-height: 1.42; }
     .login-form-body { display: grid; gap: 14px; padding: 20px 24px 22px; }
     .login-card input { width: 100%; margin-top: 7px; }
+    body[data-auth-mode="sso"] #loginForm label { display: none; }
     .login-card label { display: block; margin: 0; font-size: 13px; color: var(--text-secondary); font-weight: 650; }
     .login-card button { width: 100%; margin-top: 2px; }
     .login-card .notice { margin: 2px 0 0; }
@@ -8038,6 +8039,7 @@
     const PANEL_ENTRY = '/admin/';
     const API_ENTRY = '/rpc-7k3n9p2v';
     const API_BASE = (() => {
+      if (document.body.dataset.authApiBase) return document.body.dataset.authApiBase;
       const index = window.location.pathname.indexOf(PANEL_ENTRY);
       return index >= 0 ? window.location.pathname.slice(0, index) + API_ENTRY : '';
     })();
@@ -8051,11 +8053,18 @@
     function apiTarget(path) {
       return path.startsWith('/api/') ? API_BASE + path.slice('/api'.length) : path;
     }
+    let authMode = document.body.dataset.authMode || 'local';
+    let csrfToken = '';
+    let signingOut = false;
+    const ssoLoginUrl = document.body.dataset.authStart || '';
     async function api(path, options = {}) {
       const target = apiTarget(path);
-      const res = await fetch(target, { credentials: 'same-origin', ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
+      const res = await fetch(target, { credentials: 'same-origin', ...options, headers: { 'content-type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}), ...(options.headers || {}) } });
       const text = await res.text();
       const data = text ? JSON.parse(text) : {};
+      if (data.authMode) authMode = data.authMode;
+      if (data.csrfToken) csrfToken = data.csrfToken;
+      if (res.status === 401 && authMode === 'sso' && !signingOut && ssoLoginUrl) window.location.assign(ssoLoginUrl);
       if (!res.ok) throw new Error(data.error || text || res.statusText);
       return data;
     }
@@ -16540,6 +16549,7 @@
     }
     async function login(event) {
       event.preventDefault();
+      if (authMode === 'sso' && ssoLoginUrl) { window.location.assign(ssoLoginUrl); return; }
       const btn = $('loginButton');
       btn.disabled = true;
       btn.textContent = '登录中...';
@@ -16564,6 +16574,17 @@
       }
     }
     async function logout() {
+      if (authMode === 'sso') {
+        if (signingOut) return;
+        signingOut = true;
+        $('logout').disabled = true;
+        try {
+          const result = await api('/api/logout', { method: 'POST', body: '{}' });
+          if (!result.redirectTo) throw new Error('invalid_logout_response');
+          window.location.assign(result.redirectTo);
+        } catch (error) { signingOut = false; $('logout').disabled = false; showNotice('退出失败：' + error.message, 'err'); }
+        return;
+      }
       await api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
       setAccountMenu(false);
       setAuthView(false);
@@ -16578,6 +16599,7 @@
     async function initSession() {
       try {
         const session = await api('/api/session');
+        if (session.authMode === 'sso' && !signingOut && !session.authenticated && ssoLoginUrl) { window.location.assign(ssoLoginUrl); return; }
         state.username = session.username || '';
         adoptProfile(session.profile || { name: session.username, theme: document.documentElement.dataset.themePreference || 'auto' });
         setAuthView(Boolean(session.authenticated));
@@ -16594,6 +16616,14 @@
     }
 
     $('loginForm').onsubmit = login;
+    if (authMode === 'sso') {
+      $('loginForm').querySelector('h1').textContent = '统一登录';
+      $('loginForm').querySelector('.desc').textContent = '使用 Chitanda 统一账号进入管理控制台。';
+      $('loginForm').querySelectorAll('label').forEach(node => { node.hidden = true; });
+      $('username').disabled = true;
+      $('password').disabled = true;
+      $('loginButton').textContent = '统一登录';
+    }
     $('navToggle').onclick = () => setMobileNav(!$('appHeader').classList.contains('nav-open'));
     $('navDrawerScrim').onclick = () => setMobileNav(false);
     $('accountMenuToggle').onclick = () => setAccountMenu($('accountMenu').classList.contains('hidden'));

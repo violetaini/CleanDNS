@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createSsoAuth } from './sso-auth.js';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
@@ -284,6 +285,7 @@ const dnsRateLimitBuckets = new Map();
 const domainProtectionChecker = new DomainProtectionChecker({ query: queryDomainProtectionService });
 const recentQueries = [];
 let startedAt = Date.now();
+const ssoAuth = createSsoAuth();
 let adminAuth = ensureAdminAuth();
 const sessions = new Map();
 const subscriptionAutoUpdateState = {
@@ -3560,8 +3562,11 @@ function startHttpServer() {
       if (url.pathname === '/healthz') return json(res, 200, { ok: true, uptime: Math.floor((Date.now() - startedAt) / 1000) });
       if (url.pathname === '/favicon.ico') return serveFavicon(res);
       if (url.pathname === config.service.dohPath) return handleDoh(req, res, url);
-      if (url.pathname === '/' || url.pathname === '/clean-dns' || url.pathname === '/admin/') return servePanel(res);
-      if (url.pathname.startsWith('/api/')) return handleApi(req, res, url);
+      if (url.pathname === '/' || url.pathname === '/clean-dns' || url.pathname === '/admin/' || url.pathname === '/clean-dns/') {
+        if (ssoAuth.enabled && !(await ssoAuth.panel(req, res))) return;
+        return servePanel(res);
+      }
+      if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
       notFound(res);
     } catch (err) {
       console.error(err);
@@ -5220,7 +5225,8 @@ async function updateDhcpStaticLease(body) {
   }
 }
 
-function handleApi(req, res, url) {
+async function handleApi(req, res, url) {
+  if (ssoAuth.enabled && await ssoAuth.handleApi(req, res, url, getAdminProfile)) return;
   if (req.method === 'POST' && url.pathname === '/api/login') {
     return readJson(req).then((body) => {
       const username = String(body.username || '');
@@ -5916,6 +5922,7 @@ function handleApi(req, res, url) {
 }
 
 function isAuthorized(req) {
+  if (ssoAuth.enabled) return Boolean(req.ssoIdentity);
   return isSessionValid(parseCookies(req).cleandns_session);
 }
 
@@ -7373,7 +7380,8 @@ function servePanel(res) {
   if (!fs.existsSync(panelPath)) {
     return json(res, 500, { error: 'panel_missing' });
   }
-  const html = fs.readFileSync(panelPath, 'utf8');
+  let html = fs.readFileSync(panelPath, 'utf8');
+  if (ssoAuth.enabled) html = html.replace(/<body(?=[\s>])/, '<body data-auth-mode="sso" data-auth-start="' + ssoAuth.loginUrl + '" data-auth-api-base="' + ssoAuth.apiBase + '"');
   res.writeHead(200, {
     'content-type': 'text/html; charset=utf-8',
     'cache-control': 'no-store',

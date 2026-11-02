@@ -28,6 +28,8 @@ sudo nginx -s reload
 
 ## DoQ and DHCP
 
+For optional browser management SSO, see [Management SSO](sso.md). Configure it independently of public DoH and DoQ access.
+
 Build with `bash build-cleandns-dns`. On Windows, use `go build -o bin/cleandns-dns.exe ./cmd/cleandns-dns` and set `CLEANDNS_DOQ_RUNTIME_COMMAND` to that executable. The main Node service owns the child process, certificate reloads, and shutdown. Configure Linux DHCP only for the intended network interface.
 
 ## Backups
