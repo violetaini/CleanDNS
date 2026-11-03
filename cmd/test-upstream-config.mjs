@@ -33,6 +33,22 @@ assert.deepEqual(selectUpstreamConfiguration(configuration, 'www.example.com', '
 assert.deepEqual(selectUpstreamConfiguration(configuration, 'router', 'A').upstreams, ['127.0.0.1']);
 assert.deepEqual(selectUpstreamConfiguration(configuration, 'com', 'A').upstreams, ['2.2.2.2']);
 assert.equal(selectUpstreamConfiguration(configuration, 'child.example.com', 'DS').route, '[/example.com/example.net/]');
+const strictConfiguration = normalizeUpstreamConfiguration([
+  '1.1.1.1',
+  '[/PRIVATE.test/]   https://resolver.test/dns-query   [2001:db8::53]    -strict',
+  '[/public.private.test/]#'
+], { requireDefaults: true });
+assert.equal(strictConfiguration[1], '[/private.test/]https://resolver.test/dns-query 2001:db8::53 -strict');
+for (const type of ['A', 'AAAA', 'DS']) {
+  const route = selectUpstreamConfiguration(strictConfiguration, 'private.test', type);
+  assert.equal(route.strict, true);
+  assert.deepEqual(route.upstreams, ['https://resolver.test/dns-query', '2001:db8::53']);
+}
+assert.equal(selectUpstreamConfiguration(strictConfiguration, 'public.private.test', 'A').usesDefault, true);
+assert.equal(selectUpstreamConfiguration(strictConfiguration, 'other.test', 'A').strict, undefined);
+for (const bad of ['[/private.test/]-strict', '[/private.test/]# -strict', '[/private.test/]-strict 1.1.1.1', '[/private.test/]1.1.1.1 -strict -strict', '1.1.1.1 -strict']) {
+  assert.throws(() => normalizeUpstreamConfiguration([bad]), /bad_upstream/);
+}
 assert.deepEqual(upstreamConfigurationSummary(configuration), { defaults: 1, routes: 5, comments: 1, targets: 6 });
 
 const entries = upstreamConfigurationEntries(configuration);

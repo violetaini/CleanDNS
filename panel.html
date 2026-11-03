@@ -7187,7 +7187,9 @@
                 <code>[/*.example.com/]tls://dns.google</code>
                 <code>[//]192.168.1.1</code>
                 <code>[/www.example.com/]#</code>
+                <code>[/home.arpa/]192.168.1.1 -strict</code>
               </div>
+              <span>在域名规则最后加空格和 -strict，只使用该行的上游。全部失败时返回 SERVFAIL，不使用全局后备 DNS。</span>
             </details>
           </div>
         </div>
@@ -14892,14 +14894,16 @@
             addEntry(raw, '无效规则', false, true);
             return;
           }
-          const route = match[1];
           const routeTargets = match[2].trim().split(/\s+/).filter(Boolean);
+          const strict = routeTargets.at(-1) === '-strict';
+          if (strict) routeTargets.pop();
+          const route = strict ? match[1] + ' -strict' : match[1];
           routes.push(route);
-          if (routeTargets.length === 1 && routeTargets[0] === '#') {
+          if (!strict && routeTargets.length === 1 && routeTargets[0] === '#') {
             addEntry('#', route, true);
             return;
           }
-          if (!routeTargets.length || routeTargets.includes('#')) {
+          if (!routeTargets.length || routeTargets.includes('#') || routeTargets.includes('-strict')) {
             invalid.push(raw);
             addEntry(raw, route, false, true);
             return;
@@ -16619,8 +16623,7 @@
       const timeoutMs = Number($('timeoutMs').value) || 2500;
       const dnssecEnabled = $('dnsDnssecEnabled')?.checked === true;
       renderUpstreamTestResult({ results: [], pending: true, dnssecEnabled, name, type, timeoutMs });
-      const testCount = analysis.targets.length + fallbackUpstreams.length + bootstrapDns.length + analyzeUpstreamConfiguration(privateReverseUpstreams).targets.length;
-      showToast('上游 DNS 测试已开始', testCount + ' 个 DNS 服务器，测试 ' + name + ' ' + type + '，超时 ' + timeoutMs + ' ms。', 'info', 4200);
+      showToast('上游 DNS 测试已开始', '测试 ' + name + ' ' + type + '，超时 ' + timeoutMs + ' ms。', 'info', 4200);
       try {
         const result = await api('/api/test-upstreams', {
           method: 'POST',

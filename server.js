@@ -4320,7 +4320,7 @@ async function queryUpstreams(originalPacket, ecs, options = {}) {
     const result = await queryUpstreamSet(selection.upstreams, packet, selection.mode, options);
     return { ...result, upstreamMode: selection.mode, upstreamRoute: selection.route };
   } catch (primaryError) {
-    const canUseFallback = selection.scope === 'global' && (config.fallbackUpstreams || []).length;
+    const canUseFallback = !selection.strict && selection.scope === 'global' && (config.fallbackUpstreams || []).length;
     if (!canUseFallback) throw primaryError;
     try {
       const result = await querySequentialUpstreams(config.fallbackUpstreams, packet, options);
@@ -4333,6 +4333,12 @@ async function queryUpstreams(originalPacket, ecs, options = {}) {
 
 function selectConfiguredUpstreams(packet, options = {}) {
   const question = parseQuestion(packet) || { qname: '', qtype: 0 };
+  const globalMode = normalizeUpstreamMode(config.upstreamMode);
+  const globalSelection = selectUpstreamConfiguration(config.upstreams, question.qname, question.qtype, {
+    defaultRoute: '默认上游'
+  });
+  if (globalSelection?.strict) return { ...globalSelection, mode: globalMode, scope: 'global' };
+
   const globalDefaults = compileUpstreamConfiguration(config.upstreams).defaults;
   const layers = [];
   const clientUpstreams = options.clientProfile?.upstreams || [];
@@ -4355,13 +4361,6 @@ function selectConfiguredUpstreams(packet, options = {}) {
       defaultRoute: '私有反向默认上游'
     });
   }
-  layers.push({
-    lines: config.upstreams,
-    mode: normalizeUpstreamMode(config.upstreamMode),
-    scope: 'global',
-    defaultRoute: '默认上游'
-  });
-
   for (const layer of layers) {
     const selected = selectUpstreamConfiguration(layer.lines, question.qname, question.qtype, {
       fallbackDefaults: globalDefaults,
@@ -4369,6 +4368,7 @@ function selectConfiguredUpstreams(packet, options = {}) {
     });
     if (selected) return { ...selected, mode: layer.mode, scope: layer.scope };
   }
+  if (globalSelection) return { ...globalSelection, mode: globalMode, scope: 'global' };
   throw new Error('no upstreams');
 }
 
@@ -5900,8 +5900,14 @@ async function handleApi(req, res, url) {
       const transportOptions = bootstrapDns.length ? { lookup: createBootstrapLookup(bootstrapDns, timeoutMs) } : {};
       const upstreamEntries = upstreamConfigurationEntries(upstreams);
       const privateReverseEntries = upstreamConfigurationEntries(privateReverseUpstreams);
-      const selected = selectUpstreamConfiguration(upstreams, name, QTYPE[type], { defaultRoute: '默认上游' });
-      const results = await Promise.all([
+      const globalSelection = selectUpstreamConfiguration(upstreams, name, QTYPE[type], { defaultRoute: '默认上游' });
+      const privateSelection = type === 'PTR' && isPrivateReverseName(name)
+        ? selectUpstreamConfiguration(privateReverseUpstreams, name, QTYPE.PTR)
+        : null;
+      const selected = globalSelection?.strict || !privateSelection?.strict ? globalSelection : privateSelection;
+      const results = selected?.strict ? await Promise.all(selected.upstreams.map((upstream) =>
+        testSingleUpstream(upstream, testPacket, timeoutMs, { role: 'primary', route: selected.route, transportOptions })
+      )) : await Promise.all([
         ...upstreamEntries.map((entry) => testSingleUpstream(entry.upstream, testPacket, timeoutMs, {
           role: 'primary',
           route: summarizeUpstreamRoutes(entry.routes),

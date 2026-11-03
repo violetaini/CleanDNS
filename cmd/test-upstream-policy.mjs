@@ -15,6 +15,7 @@ const expectedAddress = '203.0.113.42';
 await testGlobalFallback();
 await testBootstrapLookup();
 await testDomainSpecificUpstreamRouting();
+await testStrictDomainRouting();
 await testLayeredUpstreamRouting();
 await testClientUpstreamDoesNotLeakToFallback();
 await testClientUpstreamCachePolicy();
@@ -152,6 +153,53 @@ async function testDomainSpecificUpstreamRouting() {
     });
   } finally {
     await Promise.all(Object.values(servers).map((server) => server.close()));
+  }
+}
+
+async function testStrictDomainRouting() {
+  const preferred = await startDnsServer((packet) => {
+    if (parseQuestion(packet).name !== 'down.private.test') return buildAnswer(packet, '198.51.100.21');
+  });
+  const alternate = await startDnsServer((packet) => buildAnswer(packet, '198.51.100.22'));
+  const fallback = await startDnsServer((packet) => buildAnswer(packet, '198.51.100.23'));
+  const dead = await startDnsServer(() => null);
+  const address = (server) => `udp://127.0.0.1:${server.port}`;
+  const strictRoutes = [
+    `[/private.test/]${address(preferred)} -strict`,
+    `[/redundant.test/]${address(dead)} ${address(preferred)} -strict`,
+    `[/normal.test/]${address(dead)}`,
+    '[/public.private.test/]#'
+  ];
+  try {
+    await withCleanDns({
+      upstreams: [address(alternate), ...strictRoutes],
+      fallbackUpstreams: [address(fallback)],
+      bootstrapDns: [address(fallback)],
+      timeoutMs: 120,
+      clients: [{ id: 'strict-priority-client', name: 'Strict priority', identifiers: ['127.0.0.1'], upstreams: ['[/down.private.test/]#', '[/client.test/]#'] }]
+    }, async ({ baseUrl, cookie }) => {
+      assert.equal(firstIpv4Answer(await dohQuery(baseUrl, 'private.test', 'DS')), '198.51.100.21');
+      assert.equal(firstIpv4Answer(await dohQuery(baseUrl, 'redundant.test')), '198.51.100.21');
+      assert.equal((await dohQuery(baseUrl, 'down.private.test')).readUInt16BE(2) & 15, 2);
+      assert.equal(alternate.queries.length, 0);
+      assert.equal(fallback.queries.length, 0);
+
+      const testResponse = await fetch(baseUrl + '/api/test-upstreams', {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'down.private.test' })
+      });
+      assert.equal(testResponse.status, 200);
+      const tested = await testResponse.json();
+      assert.deepEqual(tested.selectedUpstreams, [address(preferred)]);
+      assert.equal(tested.results.length, 1);
+      assert.equal(alternate.queries.length, 0);
+      assert.equal(fallback.queries.length, 0);
+      assert.equal(firstIpv4Answer(await dohQuery(baseUrl, 'normal.test')), '198.51.100.23');
+      assert.equal(firstIpv4Answer(await dohQuery(baseUrl, 'public.private.test')), '198.51.100.22');
+    });
+  } finally {
+    await Promise.all([preferred, alternate, fallback, dead].map((server) => server.close()));
   }
 }
 
