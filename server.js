@@ -145,6 +145,7 @@ const RCODE = {
   FORMERR: 1,
   SERVFAIL: 2,
   NXDOMAIN: 3,
+  NOTIMP: 4,
   REFUSED: 5
 };
 
@@ -3599,7 +3600,9 @@ function startHttpServer() {
 function startUdpServer() {
   const udp = dgram.createSocket('udp4');
   udp.on('message', async (message, rinfo) => {
-    const proxy = parseProxyV2(message);
+    // The managed DoQ helper forwards from loopback. Remote UDP clients must
+    // not be able to supply their own source address or transport metadata.
+    const proxy = rinfo.address.startsWith('127.') ? parseProxyV2(message) : null;
     const packet = proxy ? message.subarray(proxy.offset) : message;
     const clientIp = proxy?.srcIp || rinfo.address;
     try {
@@ -3833,7 +3836,8 @@ async function resolveDns(packet, clientIp, protocol) {
   const queryStarted = Date.now();
   const elapsedMs = () => Date.now() - queryStarted;
   const parsed = parseQuestion(packet);
-  if (!parsed) return buildErrorResponse(packet, RCODE.FORMERR);
+  if (!parsed || (packet[2] & 0x80) !== 0 || packet.readUInt16BE(4) !== 1) return buildErrorResponse(packet, RCODE.FORMERR);
+  if ((packet[2] & 0x78) !== 0) return buildErrorResponse(packet, RCODE.NOTIMP);
 
   const qtypeName = QTYPE_NAME[parsed.qtype] || String(parsed.qtype);
   const clientProfile = findClientProfile(clientIp);

@@ -74,7 +74,10 @@ try {
     const innerQuery = query(); innerQuery.writeUInt16BE(0x1234);
     const spoofResponse = await udp(plainPort, proxyPacket(innerQuery, '203.0.113.10'));
     assert.notEqual(spoofResponse.readUInt16BE(0), innerQuery.readUInt16BE(0), 'plain DNS must not unwrap a forged PROXY header');
-    assert.equal(code(spoofResponse), 5, 'forged metadata must still use the plain source policy');
+    assert.equal(code(spoofResponse), 1, 'the plain listener rejects the proxy header as a malformed DNS packet');
+    const dnsUpdate = query('unsupported-update.test');
+    dnsUpdate[2] |= 0x28;
+    await assertTransport('DNS UPDATE must not be forwarded to an upstream', udp(plainPort, dnsUpdate), 4);
     assert.equal(queries, beforeSpoof, 'a public plain listener must not accept PROXY transport metadata');
     await update({ accessProtocols: { plain: { blockedClients: [] }, doq: policy('custom', ['2001:db8::/32'], ['2001:db8::1']) } });
 
