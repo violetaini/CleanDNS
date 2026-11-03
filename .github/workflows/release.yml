@@ -84,4 +84,4 @@ jobs:
           cd dist
           sha256sum *.tar.gz > SHASUMS256.txt
           cp ../install.sh .
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "CleanDNS $GITHUB_REF_NAME" --notes-file ../docs/release-v0.2.0.md *.tar.gz SHASUMS256.txt install.sh
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "CleanDNS $GITHUB_REF_NAME" --notes-file "../docs/release-${GITHUB_REF_NAME}.md" *.tar.gz SHASUMS256.txt install.sh

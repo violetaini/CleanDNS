@@ -1,4 +1,5 @@
 import dgram from 'node:dgram';
+import { randomInt } from 'node:crypto';
 import dns from 'node:dns';
 import https from 'node:https';
 import net from 'node:net';
@@ -86,6 +87,12 @@ export async function queryDnsUpstream(value, packet, timeoutMs, options = {}) {
   }
   const target = parseUpstreamAddress(value);
   const timeout = normalizeTimeout(timeoutMs);
+  const questionEnd = readQuestionEnd(packet);
+  if (questionEnd === null || (packet[2] & 0x80) !== 0) throw new Error('bad_dns_query');
+  const originalId = packet.readUInt16BE(0);
+  const wireId = target.protocol === 'udp' ? randomInt(65536) : target.protocol === 'https' ? 0 : originalId;
+  const wireQuery = withDnsId(packet, wireId);
+  const matchesQuery = (reply) => matchesDnsResponse(reply, wireQuery, questionEnd);
   let response;
   if (target.protocol === 'udp') {
     const started = Date.now();
@@ -93,18 +100,17 @@ export async function queryDnsUpstream(value, packet, timeoutMs, options = {}) {
       ? { ...target, host: await lookupOne(options.lookup, target.host, timeout) }
       : target;
     const udpTimeout = Math.max(1, timeout - (Date.now() - started));
-    response = await queryUdp(udpTarget, packet, udpTimeout);
-    response = validateDnsResponse(response);
+    response = await queryUdp(udpTarget, wireQuery, udpTimeout, matchesQuery);
     if ((response[2] & 0x02) !== 0) {
       const remaining = Math.max(1, timeout - (Date.now() - started));
-      response = await queryTcp({ ...target, host: udpTarget.host, protocol: 'tcp' }, packet, remaining, false);
+      response = await queryTcp({ ...target, host: udpTarget.host, protocol: 'tcp' }, wireQuery, remaining, false);
     }
   } else if (target.protocol === 'tcp') {
-    response = await queryTcp(target, packet, timeout, false, options.lookup);
+    response = await queryTcp(target, wireQuery, timeout, false, options.lookup);
   } else if (target.protocol === 'tls') {
-    response = await queryTcp(target, packet, timeout, true, options.lookup);
+    response = await queryTcp(target, wireQuery, timeout, true, options.lookup);
   } else if (target.protocol === 'https') {
-    response = await queryDoh(target, packet, timeout, options.lookup);
+    response = await queryDoh(target, wireQuery, timeout, options.lookup);
   } else if (target.protocol === 'quic') {
     const started = Date.now();
     const resolvedHost = net.isIP(target.host)
@@ -116,12 +122,13 @@ export async function queryDnsUpstream(value, packet, timeoutMs, options = {}) {
       address: `${formatHost(resolvedHost)}:${target.port}`,
       serverName: target.host,
       timeoutMs: remaining,
-      packet
+      packet: wireQuery
     });
   } else {
     throw new Error('unsupported_upstream_protocol');
   }
-  return validateDnsResponse(response);
+  if (!matchesQuery(response)) throw new Error('bad_dns_response');
+  return withDnsId(response, originalId);
 }
 
 function normalizePlainUpstream(raw) {
@@ -178,7 +185,7 @@ function formatUrlHostname(host) {
   return net.isIP(host) === 6 ? `[${host}]` : host;
 }
 
-function queryUdp(target, packet, timeoutMs) {
+function queryUdp(target, packet, timeoutMs, matchesQuery) {
   return new Promise((resolve, reject) => {
     const socket = dgram.createSocket(net.isIP(target.host) === 6 ? 'udp6' : 'udp4');
     let settled = false;
@@ -196,7 +203,9 @@ function queryUdp(target, packet, timeoutMs) {
     };
     const timer = setTimeout(() => finish(new Error('timeout')), timeoutMs);
     socket.once('error', (error) => finish(error));
-    socket.once('message', (message) => finish(null, message));
+    socket.on('message', (message) => {
+      if (matchesQuery(message)) finish(null, message);
+    });
     socket.connect(target.port, target.host, () => {
       socket.send(packet, (error) => {
         if (error) finish(error);
@@ -275,13 +284,32 @@ async function queryDoh(target, packet, timeoutMs, lookup) {
     if (!response.ok) throw new Error(`doh_http_${response.status}`);
     const contentType = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (contentType !== 'application/dns-message') throw new Error('bad_doh_content_type');
-    return Buffer.from(await response.arrayBuffer());
+    if (!response.body) throw new Error('bad_dns_response');
+    const reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_DNS_MESSAGE_SIZE) {
+          reader.cancel().catch(() => {});
+          throw new Error('bad_dns_response');
+        }
+        chunks.push(value);
+      }
+      return Buffer.concat(chunks, size);
+    } finally {
+      reader.releaseLock();
+    }
   } catch (error) {
     if (controller.signal.aborted) throw new Error('timeout');
     if (error?.message === 'fetch failed' && error?.cause?.code) throw new Error(error.cause.code);
     throw error;
   } finally {
     clearTimeout(timer);
+    controller.abort();
   }
 }
 
@@ -351,9 +379,40 @@ function lookupOne(lookup, hostname, timeoutMs) {
   });
 }
 
-function validateDnsResponse(response) {
-  if (!Buffer.isBuffer(response) || response.length < 12 || response.length > MAX_DNS_MESSAGE_SIZE) {
-    throw new Error('bad_dns_response');
+function withDnsId(packet, id) {
+  if (packet.readUInt16BE(0) === id) return packet;
+  const copy = Buffer.from(packet);
+  copy.writeUInt16BE(id, 0);
+  return copy;
+}
+
+function readQuestionEnd(packet) {
+  if (packet.length < 17 || packet.readUInt16BE(4) !== 1) return null;
+  // The first name starts immediately after the header, so it has no prior
+  // domain name to reference with a compression pointer.
+  let offset = 12;
+  while (offset < packet.length && offset - 12 < 255) {
+    const length = packet[offset++];
+    if (length === 0) return offset + 4 <= packet.length ? offset + 4 : null;
+    if (length > 63 || offset + length > packet.length) return null;
+    offset += length;
   }
-  return response;
+  return null;
+}
+
+function matchesDnsResponse(response, query, questionEnd) {
+  if (!Buffer.isBuffer(response) || response.length < questionEnd || response.length > MAX_DNS_MESSAGE_SIZE) return false;
+  if ((response[2] & 0x80) === 0 || (response[2] & 0x78) !== (query[2] & 0x78) || response.readUInt16BE(0) !== query.readUInt16BE(0)) return false;
+  if (readQuestionEnd(response) !== questionEnd) return false;
+  const nameEnd = questionEnd - 4;
+  for (let offset = 12; offset < nameEnd; offset += 1) {
+    const actual = response[offset];
+    const expected = query[offset];
+    if (foldDnsAscii(actual) !== foldDnsAscii(expected)) return false;
+  }
+  return response.readUInt32BE(nameEnd) === query.readUInt32BE(nameEnd);
+}
+
+function foldDnsAscii(byte) {
+  return byte >= 65 && byte <= 90 ? byte + 32 : byte;
 }

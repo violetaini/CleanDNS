@@ -12,6 +12,8 @@ const query = buildQuery('example.com');
 const expectedAddress = '203.0.113.10';
 const udp = dgram.createSocket('udp4');
 const truncatedUdp = dgram.createSocket('udp4');
+const mismatchedUdp = dgram.createSocket('udp4');
+let tcpReply = buildAnswer;
 const tcp = net.createServer((socket) => {
   let received = Buffer.alloc(0);
   socket.on('data', (chunk) => {
@@ -19,7 +21,7 @@ const tcp = net.createServer((socket) => {
     if (received.length < 2) return;
     const length = received.readUInt16BE(0);
     if (received.length < length + 2) return;
-    const response = buildAnswer(received.subarray(2, length + 2));
+    const response = tcpReply(received.subarray(2, length + 2));
     const frame = Buffer.alloc(response.length + 2);
     frame.writeUInt16BE(response.length, 0);
     response.copy(frame, 2);
@@ -32,6 +34,28 @@ udp.on('message', (packet, info) => {
 });
 truncatedUdp.on('message', (packet, info) => {
   truncatedUdp.send(buildTruncatedAnswer(packet), info.port, info.address);
+});
+mismatchedUdp.on('message', (packet, info) => {
+  const answer = buildAnswer(packet);
+  const wrongId = Buffer.from(answer);
+  wrongId.writeUInt16BE(answer.readUInt16BE(0) ^ 1, 0);
+  wrongId[2] |= 0x02; // A mismatched datagram cannot trigger TCP fallback.
+  const wrongName = Buffer.from(answer);
+  wrongName[13] = 'x'.charCodeAt(0);
+  const wrongType = Buffer.from(answer);
+  wrongType.writeUInt16BE(28, packet.length - 4);
+  const wrongClass = Buffer.from(answer);
+  wrongClass.writeUInt16BE(3, packet.length - 2);
+  const notAResponse = Buffer.from(answer);
+  notAResponse[2] &= 0x7f;
+  for (const invalid of [wrongId, wrongName, wrongType, wrongClass, notAResponse]) {
+    invalid[invalid.length - 1] = 99;
+    mismatchedUdp.send(invalid, info.port, info.address);
+  }
+  if (packet[13] === 'e'.charCodeAt(0)) {
+    answer[13] = 'E'.charCodeAt(0);
+    setTimeout(() => mismatchedUdp.send(answer, info.port, info.address), 20);
+  }
 });
 
 try {
@@ -67,6 +91,12 @@ try {
 
   const udpResponse = await queryDnsUpstream(`udp://127.0.0.1:${udpPort}`, query, 1000);
   assert.equal(firstIpv4Answer(udpResponse), expectedAddress);
+  assert.equal(udpResponse.readUInt16BE(0), query.readUInt16BE(0));
+
+  await bindUdp(mismatchedUdp);
+  const mismatchAddress = `udp://127.0.0.1:${mismatchedUdp.address().port}`;
+  assert.equal(firstIpv4Answer(await queryDnsUpstream(mismatchAddress, query, 1000)), expectedAddress);
+  await assert.rejects(queryDnsUpstream(mismatchAddress, buildQuery('invalid-only.test'), 100), /timeout/);
 
   const lookup = (hostname, options, callback) => {
     assert.equal(hostname, 'resolver.example');
@@ -95,6 +125,14 @@ try {
   assert.equal(doqRequest.serverName, 'resolver.example');
   assert.ok(doqRequest.timeoutMs > 0 && doqRequest.timeoutMs <= 1000);
   assert.deepEqual(doqRequest.packet, query);
+  await assert.rejects(queryDnsUpstream('quic://resolver.example:8853', query, 1000, {
+    lookup,
+    queryDoq: async ({ packet }) => {
+      const answer = buildAnswer(packet);
+      answer.writeUInt16BE(3, packet.length - 2);
+      return answer;
+    }
+  }), /bad_dns_response/);
 
   let systemLookupDoqRequest = null;
   const systemLookupDoqResponse = await queryDnsUpstream('quic://localhost:8853', query, 1000, {
@@ -109,11 +147,19 @@ try {
 
   const fallbackResponse = await queryDnsUpstream(`udp://127.0.0.1:${tcpPort}`, query, 1000);
   assert.equal(firstIpv4Answer(fallbackResponse), expectedAddress);
+  assert.equal(fallbackResponse.readUInt16BE(0), query.readUInt16BE(0));
+  tcpReply = (packet) => {
+    const answer = buildAnswer(packet);
+    answer[13] = 'x'.charCodeAt(0);
+    return answer;
+  };
+  await assert.rejects(queryDnsUpstream(`tcp://127.0.0.1:${tcpPort}`, query, 1000), /bad_dns_response/);
+  await assert.rejects(queryDnsUpstream(`udp://127.0.0.1:${tcpPort}`, query, 1000), /bad_dns_response/);
 
   const originalFetch = globalThis.fetch;
   let dohRequest = null;
   globalThis.fetch = async (url, options) => {
-    dohRequest = { url: String(url), method: options.method, accept: options.headers.accept };
+    dohRequest = { url: String(url), method: options.method, accept: options.headers.accept, id: options.body.readUInt16BE(0) };
     return new Response(buildAnswer(Buffer.from(options.body)), {
       status: 200,
       headers: { 'content-type': 'application/dns-message' }
@@ -122,11 +168,15 @@ try {
   try {
     const dohResponse = await queryDnsUpstream('https://dns.example.com/dns-query', query, 1000);
     assert.equal(firstIpv4Answer(dohResponse), expectedAddress);
+    assert.equal(dohResponse.readUInt16BE(0), query.readUInt16BE(0));
     assert.deepEqual(dohRequest, {
       url: 'https://dns.example.com/dns-query',
       method: 'POST',
-      accept: 'application/dns-message'
+      accept: 'application/dns-message',
+      id: 0
     });
+    globalThis.fetch = async () => new Response(Buffer.alloc(65_536), { headers: { 'content-type': 'application/dns-message' } });
+    await assert.rejects(queryDnsUpstream('https://dns.example.com/dns-query', query, 1000), /bad_dns_response/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -134,6 +184,7 @@ try {
   console.log('upstream transport tests passed');
 } finally {
   udp.close();
+  mismatchedUdp.close();
   truncatedUdp.close();
   await new Promise((resolve) => tcp.close(resolve));
 }
