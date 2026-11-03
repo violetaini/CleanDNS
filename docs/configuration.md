@@ -24,6 +24,25 @@ Upstream examples: `223.5.5.5`, `tcp://1.1.1.1`, `tls://dns.example.com`, `https
 
 Runtime files under `data/` are ignored by Git. The committed blocked-service catalog is public data; your selections, update state, clients, query history, and credentials are separate files.
 
+## Domain routing and strict upstreams
+
+In **Settings → DNS settings → Upstream DNS servers**, enter one default resolver, comment, or domain rule per line. Keep at least one default resolver for unmatched names. The default resolver list and domain rules are stored as the `upstreams` array in `config.json`.
+
+```text
+1.1.1.1
+[/example.cn/example.com.cn/]223.5.5.5
+[/home.arpa/]192.168.1.1 -strict
+[/*.corp.example/]tls://resolver.corp.example https://resolver2.corp.example/dns-query -strict
+[/public.home.arpa/]#
+```
+
+- `[/domain/]` matches that domain and its subdomains. Separate multiple domains with `/`. `[/*.domain/]` matches subdomains only, and `[//]` matches single-label names such as `router`.
+- Separate upstream addresses with spaces. For a strict rule, append one space and the lowercase `-strict` token after the final address. The flag applies to every upstream on that line. Use it on domain rules with explicit addresses. `#` selects the default upstreams and cannot be combined with `-strict`.
+- The most specific matching domain rule wins. A more specific rule such as `[/public.home.arpa/]#` can explicitly select the defaults. A winning strict global rule takes priority over client and private reverse upstream selection. A winning strict rule on the full name also applies to DS queries that would normally be routed by the parent name.
+- When a strict rule wins, forwarding and the matching upstream diagnostic use its listed resolvers. If every listed resolver fails, the forwarding path can serve a cached answer from the same policy when stale caching allows it, or return `SERVFAIL`. Global fallback servers are skipped. Unmarked routes retain their existing fallback behavior. Bootstrap DNS can still resolve an upstream's own hostname.
+
+**中文速查**　全局上游留至少一條預設地址。把 `-strict` 放在域名規則最後一個上游地址後，中間加空格。例如 `[/home.arpa/]192.168.1.1 -strict`。命中後只查該行列出的上游，全部失敗時跳過全局後備 DNS。同一行可用空格分隔多個信任的上游。更具體的域名規則仍優先。
+
 ## Per-protocol source IP access
 
 In **DNS settings → Access control**, ordinary DNS (UDP and TCP together), DoH, and DoQ each have a source-IP policy. The corresponding config keys are `access.protocols.plain`, `.doh`, and `.doq`:

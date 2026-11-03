@@ -91,9 +91,7 @@ export function compileUpstreamConfiguration(lines) {
   return compiled;
 }
 
-export function selectUpstreamConfiguration(lines, qname, qtype, options = {}) {
-  const compiled = compileUpstreamConfiguration(lines);
-  const question = routingQuestionName(qname, qtype);
+function matchRoute(compiled, question) {
   let selected = null;
   let selectedScore = -1;
   const consider = (route, score) => {
@@ -109,6 +107,23 @@ export function selectUpstreamConfiguration(lines, qname, qtype, options = {}) {
     consider(compiled.normalRoutes.get(domain), specificity * 2);
     if (index > 0) consider(compiled.wildcardRoutes.get(domain), specificity * 2 + 1);
   }
+  return selected;
+}
+
+export function selectUpstreamConfiguration(lines, qname, qtype, options = {}) {
+  const compiled = compileUpstreamConfiguration(lines);
+  let question = routingQuestionName(qname, qtype);
+  let selected = matchRoute(compiled, question);
+  // DS normally routes by parent. Respect a strict match on the actual name
+  // before falling back to the parent selection, so it cannot escape the route.
+  if (Number(qtype) === 43 || String(qtype || '').toUpperCase() === 'DS') {
+    const actualName = routingQuestionName(qname);
+    const actualRoute = matchRoute(compiled, actualName);
+    if (actualRoute?.strict) {
+      question = actualName;
+      selected = actualRoute;
+    }
+  }
 
   if (selected) {
     const upstreams = selected.useDefault
@@ -120,7 +135,8 @@ export function selectUpstreamConfiguration(lines, qname, qtype, options = {}) {
       route: selected.display,
       source: 'domain',
       routedQuestion: question,
-      usesDefault: selected.useDefault
+      usesDefault: selected.useDefault,
+      ...(selected.strict ? { strict: true } : {})
     };
   }
 
@@ -183,7 +199,10 @@ function parseRouteLine(value, errorCode) {
   }
   const patterns = patternValues.map((item) => normalizeRoutePattern(item, errorCode));
   const targetTokens = match[2].trim().split(/\s+/).filter(Boolean);
-  if (!targetTokens.length || (targetTokens.includes('#') && (targetTokens.length !== 1 || targetTokens[0] !== '#'))) {
+  const strict = targetTokens.at(-1) === '-strict';
+  if (strict) targetTokens.pop();
+  if (!targetTokens.length || targetTokens.includes('-strict') ||
+      (targetTokens.includes('#') && (strict || targetTokens.length !== 1))) {
     throw new Error(errorCode);
   }
   const useDefault = targetTokens[0] === '#';
@@ -198,11 +217,12 @@ function parseRouteLine(value, errorCode) {
   const patternText = patterns.map((item) => item.canonical).join('/');
   const display = `[/${patternText}/]`;
   return {
-    canonical: `${display}${useDefault ? '#' : targets.join(' ')}`,
-    display,
+    canonical: `${display}${useDefault ? '#' : targets.join(' ')}${strict ? ' -strict' : ''}`,
+    display: strict ? `${display} -strict` : display,
     patterns,
     targets,
-    useDefault
+    useDefault,
+    strict
   };
 }
 
